@@ -1,6 +1,6 @@
 # TAPD Sidebar for Orca
 
-[简体中文](README.zh-CN.md) · [Report an issue](https://github.com/Dbraum/tapd-sidebar-for-orca/issues)
+[简体中文](README.zh-CN.md) · [Report an issue](https://github.com/Dbraum/tapd-for-orca/issues)
 
 An independent community plugin for [Orca](https://github.com/stablyai/orca). Browse TAPD requirements, bugs, and tasks in Orca’s right sidebar and start a workspace from a work item.
 
@@ -9,10 +9,10 @@ An independent community plugin for [Orca](https://github.com/stablyai/orca). Br
 Requires Orca desktop 1.4.260 or later and a TAPD personal access token.
 
 ```sh
-orca plugin install Dbraum/tapd-sidebar-for-orca@main
+orca plugin install Dbraum/tapd-for-orca@main
 ```
 
-The Git install needs an account with read access while the repository is private. Orca uses the Git credentials on the machine where it runs. You can also select a built plugin folder under **Settings → Plugins → Add plugin**.
+You can also select a built plugin folder under **Settings → Plugins → Add plugin**.
 
 Review the permissions and approve the installation in Orca. On the command line, Orca prints the approval command after it shows what access the plugin requests.
 

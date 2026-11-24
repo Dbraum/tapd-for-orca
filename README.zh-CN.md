@@ -1,6 +1,6 @@
 # Orca TAPD 侧栏插件
 
-[English](README.md) · [反馈问题](https://github.com/Dbraum/tapd-sidebar-for-orca/issues)
+[English](README.md) · [反馈问题](https://github.com/Dbraum/tapd-for-orca/issues)
 
 这是面向 [Orca](https://github.com/stablyai/orca) 的第三方插件。你可以在 Orca 右侧栏查看 TAPD 需求、缺陷和任务，也可以从工单创建工作区并启动 Agent。
 
@@ -9,10 +9,10 @@
 需要 Orca 桌面版 1.4.260 或更高版本，以及自己的 TAPD 个人访问令牌。
 
 ```sh
-orca plugin install Dbraum/tapd-sidebar-for-orca@main
+orca plugin install Dbraum/tapd-for-orca@main
 ```
 
-仓库处于私有状态时，Orca 所在机器的 Git 凭据需要有读取权限。你也可以在 **设置 → 插件 → 添加插件** 选择构建好的插件文件夹。安装时请阅读 Orca 显示的插件权限，并按提示确认。
+你也可以在 **设置 → 插件 → 添加插件** 选择构建好的插件文件夹。安装时请阅读 Orca 显示的插件权限，并按提示确认。
 
 1. 打开 Orca 右侧栏的 **TAPD**。
 2. 输入个人访问令牌，点击 **验证并保存**，选择你有权访问的 TAPD 项目。

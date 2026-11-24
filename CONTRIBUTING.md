@@ -16,6 +16,6 @@ For local testing, run `orca plugin dev load . --json`, review the requested per
 
 1. Update the version in `orca-plugin.json` and `package.json`. Refresh `package-lock.json`, update [CHANGELOG.md](CHANGELOG.md), rebuild the worker, and run the checks above.
 2. Commit the release, confirm GitHub Actions passes, and run `orca plugin release-entry . --json` against that commit. Try installing from Git in Orca.
-3. When ready for public listing, make the repository public, add the `orca-plugin` topic, and push a `vX.Y.Z` Git tag matching the manifest version. Check the directory listing from the [Orca publishing guide](https://api.onorca.dev/plugins/add).
+3. When ready for public listing, add the `orca-plugin` topic and push a `vX.Y.Z` Git tag matching the manifest version. Check the directory listing from the [Orca publishing guide](https://api.onorca.dev/plugins/add).
 
 Publish a new version for later changes so an existing tag always points at the same files.
