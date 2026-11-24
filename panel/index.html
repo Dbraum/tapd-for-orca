@@ -13,20 +13,47 @@
     </header>
     <div id="notice" role="status" aria-live="polite"></div>
     <main id="panel" aria-busy="true">
-      <section id="connection" class="stack" hidden>
-        <h2>连接 TAPD</h2>
-        <p id="account" class="muted"></p>
-        <form id="connect-form" class="stack">
-          <label
-            >个人访问令牌
-            <input name="token" type="password" required maxlength="2048" autocomplete="off"
-          /></label>
+      <section id="connection" class="stack" aria-labelledby="connection-title" hidden>
+        <div class="stack compact">
+          <div class="bar spread">
+            <h2 id="connection-title">连接 TAPD</h2>
+            <span id="connection-status" class="connection-status"></span>
+          </div>
+          <p id="account" class="muted" hidden></p>
+        </div>
+        <form id="connect-form" class="stack connection-card">
+          <div class="stack compact">
+            <div class="bar spread">
+              <label for="connection-token">个人访问令牌</label>
+              <a
+                id="get-token"
+                class="connection-link"
+                href="https://www.tapd.cn/personal_settings/index?tab=personal_token"
+                >获取令牌 <span aria-hidden="true">↗</span></a
+              >
+            </div>
+            <p id="token-help" class="muted">
+              登录 TAPD 后，在「我的设置 → 个人访问令牌」创建令牌。令牌只显示一次，请复制并粘贴到下方。
+            </p>
+            <input
+              id="connection-token"
+              name="token"
+              type="password"
+              required
+              maxlength="2048"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck="false"
+              aria-describedby="token-help token-storage"
+            />
+            <p id="token-storage" class="muted">Orca 会在本机加密保存令牌。</p>
+          </div>
           <div class="bar">
             <button class="primary" type="submit">验证并保存</button>
-            <button id="disconnect" type="button" hidden>断开连接</button>
             <button id="connection-back" type="button" class="quiet" hidden>返回</button>
           </div>
         </form>
+        <button id="disconnect" type="button" class="quiet" hidden>断开连接</button>
       </section>
 
       <section id="list" class="stack" hidden>
@@ -85,13 +112,16 @@
         </div>
       </section>
 
-      <section id="detail" class="stack" hidden>
+      <section id="detail" class="stack" aria-labelledby="item-title" hidden>
         <div class="bar spread">
           <button id="detail-back" type="button" class="quiet">← 工单列表</button>
           <button id="external" type="button" class="quiet">在 TAPD 打开 ↗</button>
         </div>
-        <h2 id="item-title"></h2>
-        <div id="item-metadata" class="bar"></div>
+        <div class="stack compact">
+          <p id="item-reference" class="muted"></p>
+          <h2 id="item-title"></h2>
+          <div id="item-badges" class="bar"></div>
+        </div>
         <div class="bar">
           <button id="start" type="button" class="primary">开始</button>
           <button id="edit" type="button">编辑</button>
@@ -109,7 +139,15 @@
           </div>
           <p id="status-hint" class="muted" hidden>需要额外字段的流转请在 TAPD 完成。</p>
         </form>
-        <p id="item-description" class="text-block"></p>
+        <section class="stack separator" aria-labelledby="description-title">
+          <h3 id="description-title">描述</h3>
+          <div id="item-description" class="detail-content"></div>
+        </section>
+        <section class="stack separator" aria-labelledby="metadata-title">
+          <h3 id="metadata-title">属性</h3>
+          <dl id="item-metadata" class="detail-properties"></dl>
+          <div id="item-labels" class="bar" hidden></div>
+        </section>
         <section class="stack separator">
           <h3>评论</h3>
           <div id="comments" class="stack"></div>

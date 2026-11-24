@@ -113,31 +113,40 @@ export async function saveTapdTask(
     return { ok: false, code: 'invalid' }
   }
   const items = parseTapdTasks([result.value], kind, binding.projectId)
+  const description =
+    fields.description === undefined ? previous?.description : tapdParagraphHtml(fields.description)
   if (items?.[0]) {
-    return { ok: true, value: items[0] }
+    const [item] = items
+    if (item.description === undefined && description !== undefined) {
+      item.description = description
+    }
+    if (previous?.details) {
+      item.details = { ...previous.details, ...item.details }
+    }
+    return { ok: true, value: item }
   }
   const ref: TapdTaskRef = { ...binding, sourceId: 'tapd', kind, id: identity.id }
   const refreshed = await getTapdTask(ref, token)
   if (refreshed.ok && refreshed.value) {
     return { ok: true, value: refreshed.value }
   }
+  const priority = fields.priority || previous?.priority
+  const labels = fields.labels ?? previous?.labels
   return {
     ok: true,
     value: {
       id: ref.id,
       url: tapdTaskUrl(ref.projectId, kind, ref.id),
       status: previous?.status ?? '',
-      statusLabel: previous?.statusLabel,
       modified: previous?.modified ?? '',
       creator: previous?.creator ?? author,
       title: fields.title ?? previous?.title ?? '',
       assignee: fields.assignee ?? previous?.assignee ?? '',
-      priority: fields.priority || previous?.priority,
-      labels: fields.labels ?? previous?.labels,
-      description:
-        fields.description === undefined
-          ? previous?.description
-          : tapdParagraphHtml(fields.description)
+      ...(previous?.statusLabel ? { statusLabel: previous.statusLabel } : {}),
+      ...(priority ? { priority } : {}),
+      ...(labels ? { labels } : {}),
+      ...(previous?.details ? { details: previous.details } : {}),
+      ...(description !== undefined ? { description } : {})
     }
   }
 }

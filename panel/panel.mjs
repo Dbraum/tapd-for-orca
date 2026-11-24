@@ -4,12 +4,15 @@ import {
   announce,
   button,
   byId,
+  externalLink,
   field,
   kinds,
   node,
   on,
+  openExternal,
   plainText,
   request,
+  richText,
   row,
   run,
   submit,
@@ -31,13 +34,23 @@ let destinations = []
 
 const selectionKey = () => `selected-project:${account.id}`
 const ref = () => ({ projectId: project.id, kind, id: task.id })
+const taskStatusLabels = new Map([
+  ['open', '未开始'],
+  ['progressing', '进行中'],
+  ['done', '已完成']
+])
 
 function connectionView() {
-  byId('account').textContent = account
-    ? `当前账号 ${account.name}`
-    : '使用 TAPD 个人访问令牌连接账号。'
-  byId('disconnect').hidden = !account
-  byId('connection-back').hidden = !account
+  const connected = Boolean(account)
+  const status = byId('connection-status')
+  status.textContent = connected ? '已连接' : '未连接'
+  status.dataset.connected = String(connected)
+  const accountLabel = byId('account')
+  accountLabel.textContent = account ? `当前账号 ${account.name}` : ''
+  accountLabel.hidden = !connected
+  byId('connection-token').placeholder = connected ? '粘贴新的个人访问令牌' : '粘贴个人访问令牌'
+  byId('disconnect').hidden = !connected
+  byId('connection-back').hidden = !connected
   view('connection')
 }
 
@@ -165,14 +178,55 @@ async function loadWorkspaces() {
 }
 
 function renderTask() {
+  const details = task.details ?? {}
+  byId('item-reference').textContent = `${project.name} · ${kinds[kind]} #${task.id}`
   byId('item-title').textContent = task.title
-  const meta = taskMetadata(task)
-  meta.append(
-    node('span', `#${task.id}`),
+  const status =
+    task.statusLabel || (kind === 'task' ? taskStatusLabels.get(task.status) : '') || task.status
+  byId('item-badges').replaceChildren(
+    ...[status, task.priority].filter(Boolean).map((value) => node('span', value, 'pill'))
+  )
+  byId('item-description').replaceChildren(richText(task.description, task.url, project.id))
+  const relatedStory = details.relatedStoryId
+    ? externalLink(`/tapd_fe/${project.id}/story/detail/${details.relatedStoryId}`, task.url)
+    : null
+  if (relatedStory) {
+    relatedStory.textContent = `#${details.relatedStoryId}`
+  }
+  const properties = [
+    ['负责人', task.assignee || '未分配'],
+    ['创建人', task.creator],
+    ['开发人员', details.developer],
+    ['所属模块', details.module],
+    [kind === 'story' ? '父需求' : '关联需求', relatedStory],
+    ['迭代 ID', details.iterationId],
+    ['进度', details.progress == null ? null : `${details.progress}%`],
+    ['预计开始', details.begin],
+    ['预计结束', details.due],
+    ['完成时间', details.completed],
+    ['创建时间', details.created],
+    ['最近更新', task.modified],
+    ['预估工时', details.effort],
+    ['完成工时', details.completedEffort],
+    ['剩余工时', details.remainingEffort]
+  ]
+  byId('item-metadata').replaceChildren(
+    ...properties
+      .filter(([, value]) => value != null && value !== '')
+      .map(([label, value]) => {
+        const group = node('div')
+        const valueNode = node('dd')
+        valueNode.append(value instanceof HTMLElement ? value : String(value))
+        group.append(node('dt', label), valueNode)
+        return group
+      })
+  )
+  const labels = byId('item-labels')
+  labels.hidden = !task.labels?.length
+  labels.replaceChildren(
+    node('span', '标签', 'muted'),
     ...(task.labels ?? []).map((label) => node('span', label, 'pill'))
   )
-  byId('item-metadata').replaceChildren(meta)
-  byId('item-description').textContent = plainText(task.description)
   byId('status-form').hidden = true
 }
 
@@ -181,10 +235,9 @@ async function loadComments(reset) {
   const result = await tapd('comments', { ...ref(), page })
   const comments = result.items.map(({ author, created, body }) => {
     const article = node('article', '', 'comment stack compact')
-    article.append(
-      node('small', `${author} · ${created}`),
-      node('p', plainText(body), 'text-block')
-    )
+    const content = node('div', '', 'detail-content')
+    content.append(richText(body, task.url, project.id, '暂无评论内容。'))
+    article.append(node('small', `${author} · ${created}`), content)
     return article
   })
   if (reset) {
@@ -286,6 +339,13 @@ on('settings-button', () => {
   announce('')
   connectionView()
 })
+on('get-token', async (event) => {
+  event.preventDefault()
+  await openExternal(
+    event.currentTarget.href,
+    '无法打开 TAPD。请在浏览器进入「我的设置 → 个人访问令牌」。'
+  )
+})
 on('connection-back', () => void run(loadProjects))
 on(
   'disconnect',
@@ -349,11 +409,7 @@ on(
       await loadItems(true)
     })
 )
-on('external', async () => {
-  await orca.host
-    .call('shell.openExternal', { url: task.url })
-    .catch(() => announce('无法打开 TAPD 链接。', 'error'))
-})
+on('external', () => void openExternal(task.url, '无法打开 TAPD 链接。'))
 on(
   'load-status',
   () =>

@@ -34,6 +34,20 @@ export const externalTaskRefSchema = z.object({
   kind: key,
   id: key
 })
+const taskDetailsSchema = z.object({
+  created: z.string().optional(),
+  begin: z.string().optional(),
+  due: z.string().optional(),
+  completed: z.string().optional(),
+  iterationId: key.optional(),
+  relatedStoryId: key.optional(),
+  developer: z.string().optional(),
+  module: z.string().optional(),
+  progress: z.number().min(0).max(100).optional(),
+  effort: z.number().min(0).optional(),
+  completedEffort: z.number().min(0).optional(),
+  remainingEffort: z.number().min(0).optional()
+})
 export const externalTaskSchema = z.object({
   id: key,
   title: z.string().trim().min(1).max(4000),
@@ -46,7 +60,8 @@ export const externalTaskSchema = z.object({
   priority: z.string().trim().min(1).max(200).optional(),
   labels: z.array(key).max(20).optional(),
   statusLabel: z.string().trim().min(1).max(200).optional(),
-  workItemTypeId: key.optional()
+  workItemTypeId: key.optional(),
+  details: taskDetailsSchema.optional()
 })
 const externalTaskPageSchema = z.object({
   items: z.array(externalTaskSchema).max(50),

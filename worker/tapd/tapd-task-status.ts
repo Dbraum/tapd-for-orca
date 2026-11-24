@@ -160,13 +160,10 @@ export async function updateTapdStatus(
   const refreshed = await getTapdTask(ref, token)
   if (refreshed.ok && refreshed.value) {
     const item = refreshed.value
-    return {
-      ok: true,
-      value: {
-        ...item,
-        statusLabel: item.statusLabel ?? (item.status === option.id ? option.label : undefined)
-      }
+    if (!item.statusLabel && item.status === option.id) {
+      item.statusLabel = option.label
     }
+    return { ok: true, value: item }
   }
   return {
     ok: true,

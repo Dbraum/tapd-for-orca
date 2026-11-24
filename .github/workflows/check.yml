@@ -41,6 +41,7 @@ jobs:
           npm ci
           npm run check
           npm run build
+          npm test
           git diff --exit-code -- worker.mjs
 
       - name: Validate with Orca

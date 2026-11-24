@@ -19752,6 +19752,20 @@ var externalTaskRefSchema = object({
   kind: key,
   id: key
 });
+var taskDetailsSchema = object({
+  created: string2().optional(),
+  begin: string2().optional(),
+  due: string2().optional(),
+  completed: string2().optional(),
+  iterationId: key.optional(),
+  relatedStoryId: key.optional(),
+  developer: string2().optional(),
+  module: string2().optional(),
+  progress: number2().min(0).max(100).optional(),
+  effort: number2().min(0).optional(),
+  completedEffort: number2().min(0).optional(),
+  remainingEffort: number2().min(0).optional()
+});
 var externalTaskSchema = object({
   id: key,
   title: string2().trim().min(1).max(4e3),
@@ -19764,7 +19778,8 @@ var externalTaskSchema = object({
   priority: string2().trim().min(1).max(200).optional(),
   labels: array(key).max(20).optional(),
   statusLabel: string2().trim().min(1).max(200).optional(),
-  workItemTypeId: key.optional()
+  workItemTypeId: key.optional(),
+  details: taskDetailsSchema.optional()
 });
 var externalTaskPageSchema = object({
   items: array(externalTaskSchema).max(50),
@@ -21179,6 +21194,147 @@ async function addTapdComment(ref, body, author, token) {
   return { ok: true, value: toComment(response.data.Comment) };
 }
 
+// worker/tapd/tapd-image-preview.ts
+var MAX_IMAGE_BYTES = 6 * 1024 * 1024;
+var CHUNK_BYTES = 3 * 192 * 1024;
+var IMAGE_CACHE_LIMIT = 3;
+var IMAGE_CACHE_MS = 12e4;
+var tapdImageOrigins = /* @__PURE__ */ new Set(["https://www.tapd.cn", "https://tapd.cn", "https://file.tapd.cn"]);
+var attachmentSchema = object({
+  Attachment: object({
+    workspace_id: union([string2(), number2().int().safe()]),
+    download_url: string2().url().max(8192)
+  })
+});
+function tapdImagePath(source) {
+  try {
+    const url2 = new URL(source, "https://www.tapd.cn");
+    return tapdImageOrigins.has(url2.origin) && !url2.username && !url2.password && url2.pathname.startsWith("/tfl/") && /\.(png|gif|jpe?g|bmp|webp)$/i.test(url2.pathname) ? url2.pathname : null;
+  } catch {
+    return null;
+  }
+}
+async function readImage(response) {
+  if (!response.body || !response.ok || Number(response.headers.get("content-length")) > MAX_IMAGE_BYTES) {
+    await response.body?.cancel().catch(() => {
+    });
+    return null;
+  }
+  const reader = response.body.getReader();
+  const parts = [];
+  let size = 0;
+  try {
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      size += value.byteLength;
+      if (size > MAX_IMAGE_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      parts.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  return bytes;
+}
+function imageMime(bytes) {
+  const header = String.fromCharCode(...bytes.subarray(0, 12));
+  if (header.startsWith("\x89PNG\r\n\n")) return "image/png";
+  if (header.startsWith("\xFF\xD8\xFF")) return "image/jpeg";
+  if (/^GIF8[79]a/.test(header)) return "image/gif";
+  if (header.length >= 12 && header.startsWith("BM")) return "image/bmp";
+  if (header.startsWith("RIFF") && header.endsWith("WEBP")) return "image/webp";
+  return null;
+}
+async function downloadTapdImage(projectId, imagePath, token) {
+  const path = tapdImagePath(imagePath);
+  if (!path) return { ok: false, code: "invalid" };
+  const result = await tapdGet(
+    "files/get_image",
+    new URLSearchParams({ workspace_id: projectId, image_path: path }),
+    token
+  );
+  if (!result.ok) return result;
+  const parsed = attachmentSchema.safeParse(result.value);
+  if (!parsed.success || String(parsed.data.Attachment.workspace_id) !== projectId) {
+    return { ok: false, code: "invalid" };
+  }
+  const url2 = new URL(parsed.data.Attachment.download_url);
+  if (url2.origin !== "https://file.tapd.cn" || url2.username || url2.password) {
+    return { ok: false, code: "invalid" };
+  }
+  try {
+    const bytes = await readImage(await fetch(url2, {
+      redirect: "error",
+      signal: AbortSignal.timeout(15e3)
+    }));
+    const mime = bytes && imageMime(bytes);
+    return mime && bytes ? { ok: true, value: { mime, bytes } } : { ok: false, code: "invalid" };
+  } catch {
+    return { ok: false, code: "unavailable" };
+  }
+}
+function imageChunk(image, handle, index) {
+  const start = index * CHUNK_BYTES;
+  if (start >= image.bytes.length) return { ok: false, code: "not-found" };
+  const end = Math.min(start + CHUNK_BYTES, image.bytes.length);
+  let binary = "";
+  for (let offset = start; offset < end; offset += 8192) {
+    binary += String.fromCharCode(...image.bytes.subarray(offset, Math.min(offset + 8192, end)));
+  }
+  return {
+    ok: true,
+    value: {
+      mime: image.mime,
+      base64: btoa(binary),
+      ...end < image.bytes.length ? { next: { handle, index: index + 1 } } : {}
+    }
+  };
+}
+function createTapdImagePreview() {
+  const cache = /* @__PURE__ */ new Map();
+  let generation = 0;
+  return {
+    clear() {
+      generation += 1;
+      cache.clear();
+    },
+    async load(projectId, path, session) {
+      const current = generation;
+      const result = await downloadTapdImage(projectId, path, session.token);
+      if (!result.ok) return result;
+      if (generation !== current) return { ok: false, code: "credentials" };
+      const image = result.value;
+      const handle = crypto.randomUUID();
+      if (image.bytes.length > CHUNK_BYTES) {
+        cache.set(handle, { ...image, sessionId: session.id, expiresAt: Date.now() + IMAGE_CACHE_MS });
+        const oldest = cache.keys().next().value;
+        if (cache.size > IMAGE_CACHE_LIMIT && oldest) {
+          cache.delete(oldest);
+        }
+      }
+      return imageChunk(image, handle, 0);
+    },
+    chunk(sessionId, handle, index) {
+      const image = cache.get(handle);
+      if (!image || image.sessionId !== sessionId || image.expiresAt <= Date.now()) {
+        return { ok: false, code: "not-found" };
+      }
+      return imageChunk(image, handle, index);
+    }
+  };
+}
+
 // worker/tapd/tapd-task-source.ts
 var WEB = "https://www.tapd.cn/";
 var PAGE_SIZE2 = 30;
@@ -21241,6 +21397,18 @@ async function listTapdProjects(nick, token) {
   return { ok: true, value: Array.from(projects.values()) };
 }
 var optionalText = string2().trim().min(1).max(200).optional().catch(void 0);
+var optionalId = tapdProjectId.transform(String).optional().catch(void 0);
+var optionalNumber = union([number2(), string2().trim().regex(/^\d+(?:\.\d+)?$/).transform(Number)]).pipe(number2().nonnegative()).optional().catch(void 0);
+var commonDetailFields = [
+  "created",
+  "begin",
+  "due",
+  "completed",
+  "iteration_id",
+  "effort",
+  "effort_completed",
+  "remain"
+];
 var rawTaskSchema = object({
   id: tapdTaskIdSchema,
   workspace_id: tapdProjectId,
@@ -21256,8 +21424,44 @@ var rawTaskSchema = object({
   priority_label: optionalText,
   v_status: optionalText,
   workitem_type_id: tapdTaskIdSchema.optional().catch(void 0),
-  label: string2().max(8e3).optional().catch(void 0)
+  label: string2().max(8e3).optional().catch(void 0),
+  created: optionalText,
+  begin: optionalText,
+  due: optionalText,
+  completed: optionalText,
+  iteration_id: optionalId,
+  parent_id: optionalId,
+  story_id: optionalId,
+  developer: optionalText,
+  module: optionalText,
+  progress: optionalNumber,
+  effort: optionalNumber,
+  effort_completed: optionalNumber,
+  remain: optionalNumber
 });
+function taskDetails(task2, kind) {
+  const fields = {
+    created: task2.created,
+    begin: task2.begin,
+    due: task2.due,
+    completed: task2.completed,
+    iterationId: task2.iteration_id,
+    effort: task2.effort,
+    completedEffort: task2.effort_completed,
+    remainingEffort: task2.remain,
+    ...kind === "story" && {
+      relatedStoryId: task2.parent_id,
+      developer: task2.developer?.replace(/;+$/, "").replaceAll(";", ", "),
+      module: task2.module
+    },
+    ...kind === "task" && {
+      relatedStoryId: task2.story_id,
+      progress: task2.progress !== void 0 && task2.progress <= 100 ? task2.progress : void 0
+    }
+  };
+  const present = Object.entries(fields).filter(([, value]) => value !== void 0);
+  return present.length ? Object.fromEntries(present) : void 0;
+}
 function parseTapdTasks(value, kind, projectId) {
   const entry = tapdTaskResource[kind];
   const rows = array(record(string2(), unknown())).safeParse(value);
@@ -21272,6 +21476,7 @@ function parseTapdTasks(value, kind, projectId) {
     }
     const task2 = item.data;
     const labels = [...new Set(task2.label?.split("|").map((label2) => label2.trim()))].filter((label2) => label2.length > 0 && label2.length <= 200).slice(0, 20);
+    const details = taskDetails(task2, kind);
     const normalized = externalTaskSchema.safeParse({
       id: task2.id,
       title: task2[entry.title],
@@ -21284,7 +21489,8 @@ function parseTapdTasks(value, kind, projectId) {
       ...task2.workitem_type_id ? { workItemTypeId: task2.workitem_type_id } : {},
       ...task2.v_status ? { statusLabel: task2.v_status } : {},
       ...labels.length > 0 ? { labels } : {},
-      ...task2.description != null ? { description: task2.description } : {}
+      ...task2.description != null ? { description: task2.description } : {},
+      ...details ? { details } : {}
     });
     if (!normalized.success) {
       return null;
@@ -21309,7 +21515,10 @@ function paramsFor(kind, projectId, detail) {
   if (detail) {
     fields.push("description");
     if (kind === "story") {
-      fields.push("workitem_type_id");
+      fields.push(...commonDetailFields, "workitem_type_id", "parent_id", "developer", "module");
+    }
+    if (kind === "task") {
+      fields.push(...commonDetailFields, "story_id", "progress");
     }
   }
   const params = new URLSearchParams({ workspace_id: projectId, fields: fields.join(",") });
@@ -21467,28 +21676,39 @@ async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
     return { ok: false, code: "invalid" };
   }
   const items = parseTapdTasks([result.value], kind, binding2.projectId);
+  const description = fields.description === void 0 ? previous?.description : tapdParagraphHtml(fields.description);
   if (items?.[0]) {
-    return { ok: true, value: items[0] };
+    const [item] = items;
+    if (item.description === void 0 && description !== void 0) {
+      item.description = description;
+    }
+    if (previous?.details) {
+      item.details = { ...previous.details, ...item.details };
+    }
+    return { ok: true, value: item };
   }
   const ref = { ...binding2, sourceId: "tapd", kind, id: identity2.id };
   const refreshed = await getTapdTask(ref, token);
   if (refreshed.ok && refreshed.value) {
     return { ok: true, value: refreshed.value };
   }
+  const priority = fields.priority || previous?.priority;
+  const labels = fields.labels ?? previous?.labels;
   return {
     ok: true,
     value: {
       id: ref.id,
       url: tapdTaskUrl(ref.projectId, kind, ref.id),
       status: previous?.status ?? "",
-      statusLabel: previous?.statusLabel,
       modified: previous?.modified ?? "",
       creator: previous?.creator ?? author,
       title: fields.title ?? previous?.title ?? "",
       assignee: fields.assignee ?? previous?.assignee ?? "",
-      priority: fields.priority || previous?.priority,
-      labels: fields.labels ?? previous?.labels,
-      description: fields.description === void 0 ? previous?.description : tapdParagraphHtml(fields.description)
+      ...previous?.statusLabel ? { statusLabel: previous.statusLabel } : {},
+      ...priority ? { priority } : {},
+      ...labels ? { labels } : {},
+      ...previous?.details ? { details: previous.details } : {},
+      ...description !== void 0 ? { description } : {}
     }
   };
 }
@@ -21627,13 +21847,10 @@ async function updateTapdStatus(ref, expectedStatus, status2, { author, token })
   const refreshed = await getTapdTask(ref, token);
   if (refreshed.ok && refreshed.value) {
     const item = refreshed.value;
-    return {
-      ok: true,
-      value: {
-        ...item,
-        statusLabel: item.statusLabel ?? (item.status === option.id ? option.label : void 0)
-      }
-    };
+    if (!item.statusLabel && item.status === option.id) {
+      item.statusLabel = option.label;
+    }
+    return { ok: true, value: item };
   }
   return {
     ok: true,
@@ -21810,6 +22027,7 @@ function reference(session, payload) {
   return { ...payload, ...binding(session, payload.projectId), sourceId: "tapd" };
 }
 function activate(orca) {
+  const imagePreview = createTapdImagePreview();
   async function getSession() {
     const stored = await orca.secrets.get(connectionKey);
     if (!stored) {
@@ -21847,10 +22065,12 @@ function activate(orca) {
       connectionKey,
       JSON.stringify({ id: account.id, author: account.name, token })
     );
+    imagePreview.clear();
     return { ok: true, value: account };
   });
   orca.panels.handle("disconnect", async () => {
     await orca.secrets.delete(connectionKey);
+    imagePreview.clear();
     return { ok: true };
   });
   withSession(
@@ -21870,6 +22090,16 @@ function activate(orca) {
     "item",
     task,
     (input2, session) => getTapdTask(reference(session, input2), session.token)
+  );
+  withSession(
+    "image-preview",
+    project.extend({ imagePath: external_exports.string().trim().min(1).max(2048) }),
+    ({ projectId, imagePath }, session) => imagePreview.load(projectId, imagePath, session)
+  );
+  withSession(
+    "image-preview-chunk",
+    external_exports.object({ handle: external_exports.uuid(), index: external_exports.number().int().positive().max(20) }),
+    ({ handle, index }, session) => Promise.resolve(imagePreview.chunk(session.id, handle, index))
   );
   withSession(
     "members",

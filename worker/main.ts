@@ -6,6 +6,7 @@ import { tapdCommentBodySchema, tapdCommentPageSchema } from './tapd/contracts/t
 import { tapdCreateTaskSchema, tapdEditTaskSchema } from './tapd/contracts/tapd-task-fields'
 import { tapdStatusUpdateSchema } from './tapd/contracts/tapd-task-status'
 import { addTapdComment, listTapdComments } from './tapd/tapd-task-comments'
+import { createTapdImagePreview } from './tapd/tapd-image-preview'
 import { listTapdProjectMembers, saveTapdTask } from './tapd/tapd-task-fields'
 import {
   getTapdTask,
@@ -40,6 +41,7 @@ function reference(session: Session, payload: z.infer<typeof task>) {
 }
 
 export default function activate(orca: PluginWorkerOrcaApi): void {
+  const imagePreview = createTapdImagePreview()
   async function getSession(): Promise<Session | null> {
     const stored = await orca.secrets.get(connectionKey)
     if (!stored) {
@@ -83,10 +85,12 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
       connectionKey,
       JSON.stringify({ id: account.id, author: account.name, token })
     )
+    imagePreview.clear()
     return { ok: true, value: account }
   })
   orca.panels.handle('disconnect', async () => {
     await orca.secrets.delete(connectionKey)
+    imagePreview.clear()
     return { ok: true }
   })
   withSession('projects', z.object({}), async (_input, { author, token }) =>
@@ -103,6 +107,16 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
   )
   withSession('item', task, (input, session) =>
     getTapdTask(reference(session, input), session.token)
+  )
+  withSession(
+    'image-preview',
+    project.extend({ imagePath: z.string().trim().min(1).max(2048) }),
+    ({ projectId, imagePath }, session) => imagePreview.load(projectId, imagePath, session)
+  )
+  withSession(
+    'image-preview-chunk',
+    z.object({ handle: z.uuid(), index: z.number().int().positive().max(20) }),
+    ({ handle, index }, session) => Promise.resolve(imagePreview.chunk(session.id, handle, index))
   )
   withSession('members', project, (input, session) =>
     listTapdProjectMembers(binding(session, input.projectId), session.token)

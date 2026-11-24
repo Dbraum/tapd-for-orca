@@ -148,6 +148,65 @@ label.check {
 label:has(input:disabled) {
   color: var(--orca-muted-foreground);
 }
+#connection {
+  max-width: 440px;
+  margin-inline: auto;
+  gap: 12px;
+}
+#connection h2 {
+  font-size: 16px;
+}
+#connection #account {
+  overflow-wrap: anywhere;
+}
+.connection-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--orca-border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--orca-muted-foreground);
+}
+.connection-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.connection-status[data-connected='true'] {
+  color: var(--orca-foreground);
+  background: var(--orca-accent);
+}
+.connection-card {
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--orca-border);
+  border-radius: var(--orca-radius, 6px);
+  background: var(--orca-card, var(--orca-background));
+}
+.connection-card label {
+  font-weight: 650;
+}
+.connection-link {
+  padding-block: 3px;
+  font-size: 12px;
+  color: var(--orca-foreground);
+  text-underline-offset: 3px;
+}
+.connection-link:hover {
+  color: var(--orca-muted-foreground);
+}
+#connection-token {
+  min-height: 34px;
+  margin-block: 3px 1px;
+}
+#disconnect {
+  justify-self: start;
+  color: var(--orca-destructive);
+}
 button.row {
   width: 100%;
   text-align: start;
@@ -193,6 +252,101 @@ article.comment {
 .text-block {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+#detail {
+  min-inline-size: 0;
+  gap: 12px;
+  overflow-wrap: anywhere;
+}
+#item-title {
+  font-size: 17px;
+  line-height: 1.4;
+}
+#item-badges .pill {
+  background: var(--orca-secondary);
+  color: var(--orca-secondary-foreground);
+}
+#linked-workspaces:empty {
+  display: none;
+}
+.detail-properties {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  gap: 8px 12px;
+}
+.detail-properties dt {
+  color: var(--orca-muted-foreground);
+  font-size: 12px;
+}
+.detail-properties dd {
+  margin: 2px 0 0;
+}
+.detail-content {
+  min-inline-size: 0;
+  line-height: 1.6;
+}
+.detail-content :is(p, div, ul, ol, blockquote, pre, h3, h4, h5, h6) {
+  margin: 0 0 0.6em;
+}
+.detail-content :is(p, div, ul, ol, blockquote, pre, h3, h4, h5, h6):last-child {
+  margin-bottom: 0;
+}
+.detail-content :is(h3, h4, h5, h6) {
+  font-size: inherit;
+  font-weight: 650;
+}
+.detail-content :is(ul, ol) {
+  padding-inline-start: 1.6em;
+}
+.detail-content blockquote {
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--orca-border);
+}
+.detail-content pre {
+  padding: 8px;
+  overflow-x: auto;
+  border: 1px solid var(--orca-border);
+  border-radius: var(--orca-radius, 6px);
+  background: var(--orca-muted);
+}
+.detail-content code {
+  font-family: var(--orca-font-mono, monospace);
+}
+.detail-image {
+  display: block;
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  margin-block: 0.4em;
+}
+.detail-image img {
+  display: block;
+  max-inline-size: 100%;
+  block-size: auto;
+  border: 1px solid var(--orca-border);
+  border-radius: var(--orca-radius, 6px);
+}
+.detail-content a,
+.detail-properties a {
+  color: var(--orca-foreground);
+  text-underline-offset: 3px;
+}
+.detail-table {
+  max-inline-size: 100%;
+  overflow-x: auto;
+}
+.detail-table table {
+  min-inline-size: 100%;
+  border-collapse: collapse;
+}
+.detail-table :is(th, td) {
+  min-inline-size: 76px;
+  padding: 5px 8px;
+  border: 1px solid var(--orca-border);
+  text-align: start;
+  vertical-align: top;
+}
+.detail-table th {
+  background: var(--orca-muted);
 }
 #notice {
   padding-block: 4px;

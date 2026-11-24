@@ -5,6 +5,7 @@ Use Node.js 22 or later and the desktop Orca CLI. Run `npm ci` once, then run th
 ```sh
 npm run check
 npm run build
+npm test
 orca plugin validate . --json
 ```
 

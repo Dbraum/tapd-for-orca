@@ -87,6 +87,15 @@ export async function listTapdProjects(
 }
 
 const optionalText = z.string().trim().min(1).max(200).optional().catch(undefined)
+const optionalId = tapdProjectId.transform(String).optional().catch(undefined)
+const optionalNumber = z
+  .union([z.number(), z.string().trim().regex(/^\d+(?:\.\d+)?$/).transform(Number)])
+  .pipe(z.number().nonnegative())
+  .optional()
+  .catch(undefined)
+const commonDetailFields = [
+  'created', 'begin', 'due', 'completed', 'iteration_id', 'effort', 'effort_completed', 'remain'
+]
 
 const rawTaskSchema = z.object({
   id: tapdId,
@@ -103,8 +112,45 @@ const rawTaskSchema = z.object({
   priority_label: optionalText,
   v_status: optionalText,
   workitem_type_id: tapdId.optional().catch(undefined),
-  label: z.string().max(8_000).optional().catch(undefined)
+  label: z.string().max(8_000).optional().catch(undefined),
+  created: optionalText,
+  begin: optionalText,
+  due: optionalText,
+  completed: optionalText,
+  iteration_id: optionalId,
+  parent_id: optionalId,
+  story_id: optionalId,
+  developer: optionalText,
+  module: optionalText,
+  progress: optionalNumber,
+  effort: optionalNumber,
+  effort_completed: optionalNumber,
+  remain: optionalNumber
 })
+
+function taskDetails(task: z.infer<typeof rawTaskSchema>, kind: TapdTaskKind) {
+  const fields = {
+    created: task.created,
+    begin: task.begin,
+    due: task.due,
+    completed: task.completed,
+    iterationId: task.iteration_id,
+    effort: task.effort,
+    completedEffort: task.effort_completed,
+    remainingEffort: task.remain,
+    ...(kind === 'story' && {
+      relatedStoryId: task.parent_id,
+      developer: task.developer?.replace(/;+$/, '').replaceAll(';', ', '),
+      module: task.module
+    }),
+    ...(kind === 'task' && {
+      relatedStoryId: task.story_id,
+      progress: task.progress !== undefined && task.progress <= 100 ? task.progress : undefined
+    })
+  }
+  const present = Object.entries(fields).filter(([, value]) => value !== undefined)
+  return present.length ? Object.fromEntries(present) : undefined
+}
 
 export function parseTapdTasks(
   value: unknown,
@@ -126,6 +172,7 @@ export function parseTapdTasks(
     const labels = [...new Set(task.label?.split('|').map((label) => label.trim()))]
       .filter((label) => label.length > 0 && label.length <= 200)
       .slice(0, 20)
+    const details = taskDetails(task, kind)
     const normalized = externalTaskSchema.safeParse({
       id: task.id,
       title: task[entry.title],
@@ -138,7 +185,8 @@ export function parseTapdTasks(
       ...(task.workitem_type_id ? { workItemTypeId: task.workitem_type_id } : {}),
       ...(task.v_status ? { statusLabel: task.v_status } : {}),
       ...(labels.length > 0 ? { labels } : {}),
-      ...(task.description != null ? { description: task.description } : {})
+      ...(task.description != null ? { description: task.description } : {}),
+      ...(details ? { details } : {})
     })
     if (!normalized.success) {
       return null
@@ -164,7 +212,10 @@ function paramsFor(kind: TapdTaskKind, projectId: string, detail: boolean): URLS
   if (detail) {
     fields.push('description')
     if (kind === 'story') {
-      fields.push('workitem_type_id')
+      fields.push(...commonDetailFields, 'workitem_type_id', 'parent_id', 'developer', 'module')
+    }
+    if (kind === 'task') {
+      fields.push(...commonDetailFields, 'story_id', 'progress')
     }
   }
   const params = new URLSearchParams({ workspace_id: projectId, fields: fields.join(',') })

@@ -60,7 +60,7 @@ export async function run(action, loading = '加载中…') {
   } catch (error) {
     const messages = Object.values(errors)
     announce(
-      messages.includes(error?.message) ? error.message : '操作失败，请检查连接后重试。',
+      messages.includes(error?.message) ? error.message : '操作失败，请重试。',
       'error'
     )
   } finally {
@@ -100,6 +100,166 @@ export function plainText(content) {
     element.remove()
   }
   return parsed.body.textContent.trim()
+}
+
+export async function openExternal(url, message = '无法打开链接。') {
+  try {
+    await orca.shell.openExternal(url)
+  } catch {
+    announce(message, 'error')
+  }
+}
+
+export function externalLink(url, baseUrl) {
+  if (!url?.trim()) {
+    return null
+  }
+  try {
+    const target = new URL(url, baseUrl)
+    if (!['http:', 'https:'].includes(target.protocol) || target.username || target.password) {
+      return null
+    }
+    const link = document.createElement('a')
+    link.href = target.href
+    link.addEventListener('click', (event) => {
+      event.preventDefault()
+      void openExternal(target.href)
+    })
+    return link
+  } catch {
+    return null
+  }
+}
+
+const richTags = new Set([
+  'p', 'div', 'br', 'hr', 'strong', 'b', 'em', 'i', 'u', 's', 'del', 'sub', 'sup',
+  'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
+  'table', 'caption', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td'
+])
+const droppedRichTags = new Set([
+  'script', 'style', 'template', 'iframe', 'object', 'embed', 'svg', 'math', 'noscript'
+])
+const tapdImageOrigins = new Set(['https://www.tapd.cn', 'https://tapd.cn', 'https://file.tapd.cn'])
+const rasterDataUrl = /^data:image\/(?:png|jpeg|gif|webp|bmp);base64,[A-Za-z0-9+/]+=*$/i
+
+async function loadImagePreview(projectId, imagePath) {
+  let chunk = await tapd('image-preview', { projectId, imagePath })
+  const { mime } = chunk
+  const parts = [chunk.base64]
+  while (chunk.next) {
+    chunk = await tapd('image-preview-chunk', chunk.next)
+    parts.push(chunk.base64)
+  }
+  return `data:${mime};base64,${parts.join('')}`
+}
+
+// Load images as they approach the viewport, one at a time.
+let loadingImages = Promise.resolve()
+const imageLoads = new WeakMap()
+const imageObserver = new IntersectionObserver((entries) => {
+  for (const { isIntersecting, target } of entries) {
+    if (!isIntersecting) continue
+    imageObserver.unobserve(target)
+    const load = imageLoads.get(target)
+    imageLoads.delete(target)
+    loadingImages = loadingImages.then(load).catch(() => {
+      // The original link remains usable if the image cannot be loaded.
+    })
+  }
+}, { rootMargin: '160px 0px' })
+
+function richImage(source, baseUrl, projectId, insideLink) {
+  const label = source.getAttribute('alt')?.trim() || '查看图片'
+  const sources = ['data-src', 'data-original', 'src']
+    .map((attribute) => source.getAttribute(attribute)?.trim())
+    .filter(Boolean)
+  const sourceLinks = sources.map((value) => externalLink(value, baseUrl)).filter(Boolean)
+  const tapdLink = sourceLinks.find((link) => {
+    const url = new URL(link.href)
+    return tapdImageOrigins.has(url.origin) && url.pathname.startsWith('/tfl/')
+  })
+  const embedded = sources.find((value) => rasterDataUrl.test(value))
+  const fallback = insideLink
+    ? node('span')
+    : tapdLink ?? sourceLinks[0] ?? externalLink(baseUrl) ?? node('span')
+  fallback.textContent = label
+  if (!embedded && (!tapdLink || !projectId)) {
+    return fallback
+  }
+  const preview = node('span', '', 'detail-image')
+  preview.append(fallback)
+  imageLoads.set(preview, async () => {
+    if (!preview.isConnected || preview.closest('[hidden]')) return
+    const image = document.createElement('img')
+    image.alt = source.getAttribute('alt')?.trim() || 'TAPD 图片'
+    image.src = embedded ?? await loadImagePreview(projectId, tapdLink.href)
+    await image.decode()
+    if (preview.isConnected) {
+      fallback.replaceChildren(image)
+    }
+  })
+  imageObserver.observe(preview)
+  return preview
+}
+
+function richChildren(source, baseUrl, projectId, insideLink = false) {
+  const fragment = document.createDocumentFragment()
+  for (const child of source.childNodes) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      fragment.append(child.textContent)
+      continue
+    }
+    if (child.nodeType !== Node.ELEMENT_NODE || droppedRichTags.has(child.localName)) {
+      continue
+    }
+    const tag = child.localName
+    if (tag === 'img') {
+      fragment.append(richImage(child, baseUrl, projectId, insideLink))
+      continue
+    }
+    const link =
+      tag === 'a' && !insideLink ? externalLink(child.getAttribute('href'), baseUrl) : null
+    const children = richChildren(child, baseUrl, projectId, insideLink || Boolean(link))
+    const displayTag = tag === 'h1' || tag === 'h2' ? 'h4' : tag
+    // Recreate allowed elements and copy only explicitly validated attributes.
+    const element = link ?? (richTags.has(displayTag) ? document.createElement(displayTag) : null)
+    if (!element) {
+      fragment.append(children)
+      continue
+    }
+    if (tag === 'td' || tag === 'th') {
+      for (const attr of ['colspan', 'rowspan']) {
+        const span = child.getAttribute(attr)
+        if (span && /^[1-9]\d{0,2}$/.test(span)) {
+          element.setAttribute(attr, span)
+        }
+      }
+    }
+    element.append(children)
+    if (tag === 'table') {
+      const scroll = node('div', '', 'detail-table')
+      scroll.tabIndex = 0
+      scroll.setAttribute('role', 'region')
+      scroll.setAttribute('aria-label', '表格')
+      scroll.append(element)
+      fragment.append(scroll)
+    } else {
+      fragment.append(element)
+    }
+  }
+  return fragment
+}
+
+export function richText(content, baseUrl, projectId, empty = '暂无描述。') {
+  const template = document.createElement('template')
+  template.innerHTML = content ?? ''
+  const result = richChildren(template.content, baseUrl, projectId)
+  if (!result.textContent.trim()) {
+    return node('p', empty, 'muted')
+  }
+  return template.content.childElementCount
+    ? result
+    : node('p', result.textContent, 'text-block')
 }
 
 export function row(title, metadata, onClick) {
