@@ -1,0 +1,46 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "id": "tapd-sidebar",
+  "name": "TAPD Sidebar",
+  "version": "0.1.0",
+  "description": "Manage TAPD requirements, bugs and tasks in Orca's sidebar.",
+  "license": "MIT",
+  "repository": "https://github.com/Dbraum/tapd-sidebar-for-orca",
+  "engines": {
+    "orca": ">=1.4.260"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "contributes": {
+    "panels": [
+      {
+        "id": "tapd-sidebar",
+        "title": "TAPD",
+        "icon": "file-text",
+        "entry": "panel/index.html"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "secrets:own"
+    },
+    {
+      "kind": "storage:own"
+    },
+    {
+      "kind": "workspace:read"
+    },
+    {
+      "kind": "workspace:write"
+    },
+    {
+      "kind": "workspace:create"
+    },
+    {
+      "kind": "agent:launch"
+    }
+  ],
+  "main": "worker.mjs"
+}

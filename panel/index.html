@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TAPD</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="bar spread">
+      <h1>TAPD</h1>
+      <button id="settings-button" type="button" class="quiet" hidden>连接设置</button>
+    </header>
+    <div id="notice" role="status" aria-live="polite"></div>
+    <main id="panel" aria-busy="true">
+      <section id="connection" class="stack" hidden>
+        <h2>连接 TAPD</h2>
+        <p id="account" class="muted"></p>
+        <form id="connect-form" class="stack">
+          <label
+            >个人访问令牌
+            <input name="token" type="password" required maxlength="2048" autocomplete="off"
+          /></label>
+          <div class="bar">
+            <button class="primary" type="submit">验证并保存</button>
+            <button id="disconnect" type="button" hidden>断开连接</button>
+            <button id="connection-back" type="button" class="quiet" hidden>返回</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="list" class="stack" hidden>
+        <div class="bar spread">
+          <h2 id="project-name" class="grow ellipsis"></h2>
+          <button id="choose-project" type="button">切换项目</button>
+          <button id="refresh" type="button" class="quiet">刷新</button>
+        </div>
+        <div id="project-picker" class="stack compact" hidden>
+          <label
+            >搜索 TAPD 项目 <input id="project-search" type="search" placeholder="项目名称或 ID"
+          /></label>
+          <div id="project-results" class="result-box"></div>
+        </div>
+        <div id="issue-list" class="stack" hidden>
+          <div id="kinds" class="bar" role="group" aria-label="工单类型">
+            <button type="button" data-kind="story" aria-pressed="true">需求</button>
+            <button type="button" data-kind="bug" aria-pressed="false">缺陷</button>
+            <button type="button" data-kind="task" aria-pressed="false">任务</button>
+            <button id="new-item" type="button" class="quiet">新建</button>
+          </div>
+          <form id="filters" class="stack compact">
+            <div class="bar">
+              <input
+                class="grow"
+                type="search"
+                name="search"
+                aria-label="搜索工单"
+                placeholder="搜索标题或 #工单编号"
+                maxlength="200"
+              />
+              <button type="submit">搜索</button>
+            </div>
+            <details>
+              <summary>筛选</summary>
+              <div class="stack">
+                <label>状态 <input name="status" maxlength="200" /></label>
+                <label>负责人 <input name="assignee" maxlength="200" /></label>
+                <label>优先级 <input name="priority" maxlength="200" /></label>
+                <label>标签 <input name="label" maxlength="200" /></label>
+                <label
+                  >排序
+                  <select name="sort">
+                    <option value="updated">最近更新</option>
+                    <option value="newest">最新创建</option>
+                  </select>
+                </label>
+                <label class="check"><input name="assignedToMe" type="checkbox" /> 分配给我</label>
+                <button type="submit">应用筛选</button>
+              </div>
+            </details>
+          </form>
+          <div id="item-results" class="result-box"></div>
+          <p id="item-empty" class="muted" hidden>没有符合条件的工单。</p>
+          <button id="more-items" type="button" hidden>加载更多</button>
+        </div>
+      </section>
+
+      <section id="detail" class="stack" hidden>
+        <div class="bar spread">
+          <button id="detail-back" type="button" class="quiet">← 工单列表</button>
+          <button id="external" type="button" class="quiet">在 TAPD 打开 ↗</button>
+        </div>
+        <h2 id="item-title"></h2>
+        <div id="item-metadata" class="bar"></div>
+        <div class="bar">
+          <button id="start" type="button" class="primary">开始</button>
+          <button id="edit" type="button">编辑</button>
+          <button id="load-status" type="button">改状态</button>
+        </div>
+        <div id="linked-workspaces" class="stack compact"></div>
+        <form id="status-form" class="stack" hidden>
+          <label
+            >目标状态
+            <select id="status-options" required></select
+          ></label>
+          <div class="bar">
+            <button type="submit" class="primary">确认流转</button>
+            <button id="status-cancel" class="quiet" type="button">取消</button>
+          </div>
+          <p id="status-hint" class="muted" hidden>需要额外字段的流转请在 TAPD 完成。</p>
+        </form>
+        <p id="item-description" class="text-block"></p>
+        <section class="stack separator">
+          <h3>评论</h3>
+          <div id="comments" class="stack"></div>
+          <button id="more-comments" type="button" hidden>加载更多评论</button>
+          <form id="comment-form" class="stack compact">
+            <label
+              >发表评论
+              <textarea
+                name="body"
+                rows="3"
+                maxlength="20000"
+                required
+                placeholder="支持 Markdown"
+              ></textarea>
+            </label>
+            <button type="submit">发表评论</button>
+          </form>
+        </section>
+      </section>
+
+      <section id="editor" class="stack" hidden>
+        <h2 id="editor-title"></h2>
+        <form id="edit-form" class="stack">
+          <label>标题 <input name="title" required maxlength="4000" /></label>
+          <label>描述 <textarea name="description" rows="5" maxlength="20000"></textarea></label>
+          <label>负责人 <input name="assignee" list="members" maxlength="200" /></label>
+          <datalist id="members"></datalist>
+          <label>优先级 <input name="priority" maxlength="200" /></label>
+          <label>标签 <input name="labels" placeholder="用 | 分隔多个标签" /></label>
+          <div class="bar">
+            <button class="primary" type="submit">保存工单</button>
+            <button id="edit-cancel" type="button" class="quiet">取消</button>
+          </div>
+        </form>
+      </section>
+
+      <section id="workspace" class="stack" hidden>
+        <h2>从工单创建工作区</h2>
+        <form id="start-form" class="stack">
+          <label
+            >Orca Git 项目
+            <select name="destination" required></select
+          ></label>
+          <label>工作区名称 <input name="name" maxlength="128" required /></label>
+          <label
+            >基准分支 <input name="baseBranch" maxlength="512" placeholder="使用项目默认分支"
+          /></label>
+          <label
+            >Agent
+            <select name="agent">
+              <option value="">仅创建工作区</option>
+              <option value="codex">Codex</option>
+              <option value="claude">Claude Code</option>
+              <option value="gemini">Gemini CLI</option>
+              <option value="opencode">OpenCode</option>
+              <option value="codebuddy">CodeBuddy</option>
+            </select>
+          </label>
+          <label>工单上下文 <textarea name="prompt" rows="5" maxlength="12000"></textarea></label>
+          <label class="check"
+            ><input name="sendPrompt" type="checkbox" /> 同时发送上下文给 Agent</label
+          >
+          <label class="check"><input name="skipSetup" type="checkbox" /> 跳过项目初始化脚本</label>
+          <div class="bar">
+            <button id="confirm-start" class="primary" type="submit">确认创建</button>
+            <button id="start-cancel" class="quiet" type="button">取消</button>
+          </div>
+        </form>
+      </section>
+    </main>
+    <script type="module" src="panel.mjs"></script>
+  </body>
+</html>
