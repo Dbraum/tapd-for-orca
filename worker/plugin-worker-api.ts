@@ -1,6 +1,7 @@
 export type PluginWorkerOrcaApi = {
   host: {
     call(method: string, params?: unknown): Promise<unknown>
+    has(method: string): boolean
   }
   panels: {
     handle(name: string, handler: (input: unknown) => unknown): unknown

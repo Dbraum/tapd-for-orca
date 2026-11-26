@@ -21,7 +21,7 @@ Review the permissions and approve the installation in Orca. On the command line
 1. Open **TAPD** in the right sidebar.
 2. Enter your TAPD personal access token, select **验证并保存** (Verify and save), and choose a project you can access. The current panel UI uses Simplified Chinese.
 3. Open a work item to read or update it. Creating, editing, changing status, and commenting require the corresponding TAPD permissions.
-4. Select **开始** (Start) to choose a Git project, base branch, and agent, then confirm. Orca sends work-item context to the agent only if you opt in. The plugin remembers the workspace so you can reopen it from the work item.
+4. Select **开始** (Start). The form preselects the Git project of the active Orca workspace when available. Leave the base branch empty to use the selected project's default. On Orca versions that support launching the default agent, the form uses the destination host's Orca default agent. You can override the project, branch, and agent, or choose to create a workspace only. Orca sends work-item context to the agent only if you opt in. The plugin remembers the workspace so you can reopen it from the work item.
 
 ## Access and data
 

@@ -306,17 +306,25 @@ async function openEditor(editing) {
 async function openStart() {
   const form = byId('start-form')
   form.reset()
-  destinations = await request('orca-projects')
+  const optionsForStart = await request('orca-projects')
+  destinations = optionsForStart.destinations
   const saved = await orca.storage.get(`destination:${account.id}:${project.id}`)
   const options = destinations.map(
     ({ name, hostId }, index) =>
       new Option(hostId === 'local' ? name : `${name} · ${hostId}`, String(index))
   )
   field(form, 'destination').replaceChildren(...options)
+  const preferred = optionsForStart.current ?? saved
   const index = destinations.findIndex(
-    ({ id, hostId }) => saved?.id === id && saved?.hostId === hostId
+    ({ id, hostId }) => preferred?.id === id && preferred?.hostId === hostId
   )
   field(form, 'destination').selectedIndex = index === -1 ? 0 : index
+  const agent = field(form, 'agent')
+  agent.querySelector('option[value="default"]')?.remove()
+  if (optionsForStart.defaultAgentSupported) {
+    agent.prepend(new Option('使用 Orca 默认 Agent', 'default'))
+    agent.value = 'default'
+  }
   field(form, 'name').value = `tapd-${kind}-${task.id}`
   const context = [
     `TAPD ${kinds[kind]} #${task.id}`,
@@ -326,8 +334,9 @@ async function openStart() {
     '工单描述（来自 TAPD）',
     plainText(task.description)
   ]
-  field(form, 'prompt').value = context.join('\n').slice(0, 12_000)
-  field(form, 'sendPrompt').disabled = true
+  const prompt = field(form, 'prompt')
+  prompt.value = context.join('\n').slice(0, prompt.maxLength)
+  field(form, 'sendPrompt').disabled = !agent.value
   byId('confirm-start').disabled = !destinations.length
   view('workspace')
   if (!destinations.length) {
@@ -553,7 +562,7 @@ submit(
     if (!result.linkSaved) {
       notes.push('工单关联暂时无法持久保存')
     }
-    if (agent && !result.agentStarted) {
+    if (result.agentLaunchFailed) {
       notes.push('Agent 未能启动')
     }
     if (!result.opened) {
