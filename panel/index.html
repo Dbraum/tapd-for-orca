@@ -193,7 +193,7 @@
           ></label>
           <label>工作区名称 <input name="name" maxlength="128" required /></label>
           <label
-            >基准分支 <input name="baseBranch" maxlength="512" placeholder="使用项目默认分支"
+            >基准分支 <input name="baseBranch" maxlength="255" placeholder="使用项目默认分支"
           /></label>
           <label
             >Agent
@@ -206,7 +206,7 @@
               <option value="codebuddy">CodeBuddy</option>
             </select>
           </label>
-          <label>工单上下文 <textarea name="prompt" rows="5" maxlength="12000"></textarea></label>
+          <label>工单上下文 <textarea name="prompt" rows="5" maxlength="4096"></textarea></label>
           <label class="check"
             ><input name="sendPrompt" type="checkbox" /> 同时发送上下文给 Agent</label
           >

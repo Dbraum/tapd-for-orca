@@ -12,11 +12,23 @@ const orcaProjects = z.object({
       hostId: z.string().nullable(),
       hidden: z.boolean().optional()
     })
-  )
+  ),
+  truncated: z.boolean().optional()
 })
 const workspaces = z.object({
   workspaces: z.array(z.object({ id: identity, name: z.string() })),
   truncated: z.boolean()
+})
+const workspaceContext = z.object({ workspaceId: identity.optional() }).nullable()
+const workspaceProjects = z.object({
+  workspaces: z.array(
+    z.object({
+      id: identity,
+      kind: z.enum(['worktree', 'folder']),
+      projectId: identity.nullish(),
+      hostId: z.string().nullable()
+    })
+  )
 })
 const linkedWorkspace = z.object({ id: identity, name: z.string() })
 const taskKeySchema = z.object({
@@ -24,25 +36,38 @@ const taskKeySchema = z.object({
   kind: tapdTaskKindSchema,
   id: tapdTaskIdSchema
 })
-const agents = z.enum(['codex', 'claude', 'gemini', 'opencode', 'codebuddy'])
+const agents = z.enum(['default', 'codex', 'claude', 'gemini', 'opencode', 'codebuddy'])
+const terminalLaunch = z.object({ terminalId: identity })
+const defaultLaunch = z.union([
+  z.object({ started: z.literal(false) }),
+  z.object({ started: z.literal(true), terminalId: identity.optional() })
+])
 const startSchema = taskKeySchema.extend({
   destination: identity,
   hostId: identity,
   name: z.string().trim().min(1).max(128),
-  baseBranch: z.string().trim().min(1).max(512).optional(),
+  baseBranch: z.string().trim().min(1).max(255).optional(),
   agent: agents.optional(),
-  prompt: z.string().max(12_000).optional(),
+  prompt: z.string().max(4096).optional(),
   skipSetup: z.boolean().optional()
 })
 type TaskKey = z.infer<typeof taskKeySchema>
 const invalid = { ok: false, code: 'invalid' } as const
 
-async function listProjects(orca: PluginWorkerOrcaApi) {
-  const result = orcaProjects.parse(await orca.host.call('project.list'))
-  return result.projects.filter(
+function eligibleProjects({ projects }: z.infer<typeof orcaProjects>) {
+  return projects.filter(
     ({ kind, hostId, hidden }) =>
       kind === 'git' && !hidden && (hostId === 'local' || hostId?.startsWith('ssh:'))
   )
+}
+
+async function focusedWorkspace(orca: PluginWorkerOrcaApi) {
+  const context = workspaceContext.parse(await orca.host.call('workspace.readContext'))
+  if (!context?.workspaceId) {
+    return undefined
+  }
+  const { workspaces: listed } = workspaceProjects.parse(await orca.host.call('workspace.list'))
+  return listed.find(({ id }) => id === context.workspaceId)
 }
 
 export function registerWorkspaceActions(
@@ -60,7 +85,22 @@ export function registerWorkspaceActions(
     )
   }
 
-  orca.panels.handle('orca-projects', () => listProjects(orca))
+  orca.panels.handle('orca-projects', async () => {
+    const [catalog, focused] = await Promise.all([
+      orca.host.call('project.list').then((result) => orcaProjects.parse(result)),
+      focusedWorkspace(orca).catch(() => undefined)
+    ])
+    const destinations = eligibleProjects(catalog)
+    const matches =
+      focused?.kind === 'worktree' && (focused.hostId || !catalog.truncated)
+        ? catalog.projects.filter(
+            ({ id, hostId }) =>
+              id === focused.projectId && (!focused.hostId || hostId === focused.hostId)
+          )
+        : []
+    const current = matches.length === 1 && destinations.includes(matches[0]) ? matches[0] : null
+    return { destinations, current, defaultAgentSupported: orca.host.has('agent.launchDefault') }
+  })
 
   orca.panels.handle('workspaces', async (payload) => {
     const input = task.safeParse(payload)
@@ -106,7 +146,7 @@ export function registerWorkspaceActions(
     }
     starting.add(key)
     try {
-      const projects = await listProjects(orca)
+      const projects = eligibleProjects(orcaProjects.parse(await orca.host.call('project.list')))
       if (!projects.some(({ id, hostId: host }) => id === destination && host === hostId)) {
         return { ok: false, code: 'workspace-project' }
       }
@@ -128,6 +168,7 @@ export function registerWorkspaceActions(
       const links = [{ id: workspaceId, name }, ...previous].slice(0, 100)
       let linkSaved = true
       let agentStarted = false
+      let agentLaunchFailed = false
       let opened = false
       let terminalId: string | undefined
       try {
@@ -139,18 +180,24 @@ export function registerWorkspaceActions(
       if (linkSaved) {
         latestLinks.delete(key)
       }
-      if (agent) {
-        try {
+      try {
+        if (agent === 'default' && orca.host.has('agent.launchDefault')) {
+          const launched = defaultLaunch.parse(
+            await orca.host.call('agent.launchDefault', { workspaceId, ...(prompt ? { prompt } : {}) })
+          )
+          agentStarted = launched.started
+          terminalId = launched.started ? launched.terminalId : undefined
+        } else if (agent && agent !== 'default') {
           const launched = await orca.host.call('agent.launch', {
             workspaceId,
             agent,
             ...(prompt ? { prompt } : {})
           })
-          terminalId = z.object({ terminalId: identity }).parse(launched).terminalId
+          terminalId = terminalLaunch.parse(launched).terminalId
           agentStarted = true
-        } catch {
-          // The task link remains available even when agent startup fails.
         }
+      } catch {
+        agentLaunchFailed = true
       }
       try {
         if (terminalId) {
@@ -164,7 +211,7 @@ export function registerWorkspaceActions(
       } catch {
         // The created workspace is visible in the existing workspace list.
       }
-      return { ok: true, value: { workspaceId, linkSaved, agentStarted, opened } }
+      return { ok: true, value: { workspaceId, linkSaved, agentStarted, agentLaunchFailed, opened } }
     } finally {
       starting.delete(key)
     }

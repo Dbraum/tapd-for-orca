@@ -21869,11 +21869,23 @@ var orcaProjects = external_exports.object({
       hostId: external_exports.string().nullable(),
       hidden: external_exports.boolean().optional()
     })
-  )
+  ),
+  truncated: external_exports.boolean().optional()
 });
 var workspaces = external_exports.object({
   workspaces: external_exports.array(external_exports.object({ id: identity, name: external_exports.string() })),
   truncated: external_exports.boolean()
+});
+var workspaceContext = external_exports.object({ workspaceId: identity.optional() }).nullable();
+var workspaceProjects = external_exports.object({
+  workspaces: external_exports.array(
+    external_exports.object({
+      id: identity,
+      kind: external_exports.enum(["worktree", "folder"]),
+      projectId: identity.nullish(),
+      hostId: external_exports.string().nullable()
+    })
+  )
 });
 var linkedWorkspace = external_exports.object({ id: identity, name: external_exports.string() });
 var taskKeySchema = external_exports.object({
@@ -21881,22 +21893,34 @@ var taskKeySchema = external_exports.object({
   kind: tapdTaskKindSchema,
   id: tapdTaskIdSchema
 });
-var agents = external_exports.enum(["codex", "claude", "gemini", "opencode", "codebuddy"]);
+var agents = external_exports.enum(["default", "codex", "claude", "gemini", "opencode", "codebuddy"]);
+var terminalLaunch = external_exports.object({ terminalId: identity });
+var defaultLaunch = external_exports.union([
+  external_exports.object({ started: external_exports.literal(false) }),
+  external_exports.object({ started: external_exports.literal(true), terminalId: identity.optional() })
+]);
 var startSchema = taskKeySchema.extend({
   destination: identity,
   hostId: identity,
   name: external_exports.string().trim().min(1).max(128),
-  baseBranch: external_exports.string().trim().min(1).max(512).optional(),
+  baseBranch: external_exports.string().trim().min(1).max(255).optional(),
   agent: agents.optional(),
-  prompt: external_exports.string().max(12e3).optional(),
+  prompt: external_exports.string().max(4096).optional(),
   skipSetup: external_exports.boolean().optional()
 });
 var invalid2 = { ok: false, code: "invalid" };
-async function listProjects(orca) {
-  const result = orcaProjects.parse(await orca.host.call("project.list"));
-  return result.projects.filter(
+function eligibleProjects({ projects }) {
+  return projects.filter(
     ({ kind, hostId, hidden }) => kind === "git" && !hidden && (hostId === "local" || hostId?.startsWith("ssh:"))
   );
+}
+async function focusedWorkspace(orca) {
+  const context = workspaceContext.parse(await orca.host.call("workspace.readContext"));
+  if (!context?.workspaceId) {
+    return void 0;
+  }
+  const { workspaces: listed } = workspaceProjects.parse(await orca.host.call("workspace.list"));
+  return listed.find(({ id }) => id === context.workspaceId);
 }
 function registerWorkspaceActions(orca, task2, account) {
   const starting = /* @__PURE__ */ new Set();
@@ -21905,7 +21929,18 @@ function registerWorkspaceActions(orca, task2, account) {
   async function readLinks(key2) {
     return latestLinks.get(key2) ?? external_exports.array(linkedWorkspace).parse(await orca.storage.get(key2) ?? []);
   }
-  orca.panels.handle("orca-projects", () => listProjects(orca));
+  orca.panels.handle("orca-projects", async () => {
+    const [catalog, focused] = await Promise.all([
+      orca.host.call("project.list").then((result) => orcaProjects.parse(result)),
+      focusedWorkspace(orca).catch(() => void 0)
+    ]);
+    const destinations = eligibleProjects(catalog);
+    const matches = focused?.kind === "worktree" && (focused.hostId || !catalog.truncated) ? catalog.projects.filter(
+      ({ id, hostId }) => id === focused.projectId && (!focused.hostId || hostId === focused.hostId)
+    ) : [];
+    const current = matches.length === 1 && destinations.includes(matches[0]) ? matches[0] : null;
+    return { destinations, current, defaultAgentSupported: orca.host.has("agent.launchDefault") };
+  });
   orca.panels.handle("workspaces", async (payload) => {
     const input2 = task2.safeParse(payload);
     const user = await account();
@@ -21948,7 +21983,7 @@ function registerWorkspaceActions(orca, task2, account) {
     }
     starting.add(key2);
     try {
-      const projects = await listProjects(orca);
+      const projects = eligibleProjects(orcaProjects.parse(await orca.host.call("project.list")));
       if (!projects.some(({ id, hostId: host }) => id === destination && host === hostId)) {
         return { ok: false, code: "workspace-project" };
       }
@@ -21968,6 +22003,7 @@ function registerWorkspaceActions(orca, task2, account) {
       const links = [{ id: workspaceId, name }, ...previous].slice(0, 100);
       let linkSaved = true;
       let agentStarted = false;
+      let agentLaunchFailed = false;
       let opened = false;
       let terminalId;
       try {
@@ -21979,17 +22015,24 @@ function registerWorkspaceActions(orca, task2, account) {
       if (linkSaved) {
         latestLinks.delete(key2);
       }
-      if (agent) {
-        try {
+      try {
+        if (agent === "default" && orca.host.has("agent.launchDefault")) {
+          const launched = defaultLaunch.parse(
+            await orca.host.call("agent.launchDefault", { workspaceId, ...prompt ? { prompt } : {} })
+          );
+          agentStarted = launched.started;
+          terminalId = launched.started ? launched.terminalId : void 0;
+        } else if (agent && agent !== "default") {
           const launched = await orca.host.call("agent.launch", {
             workspaceId,
             agent,
             ...prompt ? { prompt } : {}
           });
-          terminalId = external_exports.object({ terminalId: identity }).parse(launched).terminalId;
+          terminalId = terminalLaunch.parse(launched).terminalId;
           agentStarted = true;
-        } catch {
         }
+      } catch {
+        agentLaunchFailed = true;
       }
       try {
         if (terminalId) {
@@ -22002,7 +22045,7 @@ function registerWorkspaceActions(orca, task2, account) {
         }
       } catch {
       }
-      return { ok: true, value: { workspaceId, linkSaved, agentStarted, opened } };
+      return { ok: true, value: { workspaceId, linkSaved, agentStarted, agentLaunchFailed, opened } };
     } finally {
       starting.delete(key2);
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Preselect the current Git project when starting an Orca workspace from a TAPD work item.
+- Use the destination host’s default Agent on Orca builds that support it.
+
 ## 0.1.0 (unreleased)
 
 - Browse and search TAPD requirements, bugs, and tasks from the Orca sidebar.
