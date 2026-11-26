@@ -15,6 +15,11 @@ import {
   listTapdTasks
 } from './tapd/tapd-task-source'
 import { listTapdStatusOptions, updateTapdStatus } from './tapd/tapd-task-status'
+import {
+  createTapdSubmissions,
+  tapdSubmissionIdSchema,
+  tapdSubmissionSchema
+} from './tapd/tapd-submissions'
 import { registerWorkspaceActions } from './workspaces'
 
 const connectionKey = 'tapd-connection'
@@ -42,6 +47,7 @@ function reference(session: Session, payload: z.infer<typeof task>) {
 
 export default function activate(orca: PluginWorkerOrcaApi): void {
   const imagePreview = createTapdImagePreview()
+  const submissions = createTapdSubmissions(orca.storage)
   async function getSession(): Promise<Session | null> {
     const stored = await orca.secrets.get(connectionKey)
     if (!stored) {
@@ -126,6 +132,12 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
     project.extend(tapdCreateTaskSchema.pick({ kind: true, fields: true }).shape),
     ({ projectId, kind, fields }, session) =>
       saveTapdTask(binding(session, projectId), kind, fields, session)
+  )
+  withSession('submit-work-item', tapdSubmissionSchema, submissions.submit)
+  withSession(
+    'submission-result',
+    z.strictObject({ submissionId: tapdSubmissionIdSchema }),
+    ({ submissionId }, session) => submissions.result(submissionId, session)
   )
   withSession(
     'edit',

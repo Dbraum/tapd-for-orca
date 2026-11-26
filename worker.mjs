@@ -21462,7 +21462,7 @@ function taskDetails(task2, kind) {
   const present = Object.entries(fields).filter(([, value]) => value !== void 0);
   return present.length ? Object.fromEntries(present) : void 0;
 }
-function parseTapdTasks(value, kind, projectId) {
+function parseTapdTasks(value, kind, projectId, options) {
   const entry = tapdTaskResource[kind];
   const rows = array(record(string2(), unknown())).safeParse(value);
   if (!rows.success) {
@@ -21475,6 +21475,9 @@ function parseTapdTasks(value, kind, projectId) {
       return null;
     }
     const task2 = item.data;
+    if (options?.requireAssignee && task2[entry.owner] === void 0) {
+      return null;
+    }
     const labels = [...new Set(task2.label?.split("|").map((label2) => label2.trim()))].filter((label2) => label2.length > 0 && label2.length <= 200).slice(0, 20);
     const details = taskDetails(task2, kind);
     const normalized = externalTaskSchema.safeParse({
@@ -21572,7 +21575,7 @@ async function listTapdTasks(query, token, author) {
   const items = parseTapdTasks(result.value, kind.data, query.projectId);
   return items ? { ok: true, value: { items, hasMore: items.length === PAGE_SIZE2 } } : { ok: false, code: "invalid" };
 }
-async function getTapdTask(ref, token) {
+async function getTapdTask(ref, token, options) {
   const kind = tapdTaskKindSchema.safeParse(ref.kind);
   if (!kind.success || !isTapdProjectId(ref.projectId) || !tapdTaskIdSchema.safeParse(ref.id).success) {
     return { ok: false, code: "invalid" };
@@ -21584,7 +21587,7 @@ async function getTapdTask(ref, token) {
   if (!result.ok) {
     return result;
   }
-  const items = parseTapdTasks(result.value, kind.data, ref.projectId);
+  const items = parseTapdTasks(result.value, kind.data, ref.projectId, options);
   if (!items || items.some((item) => item.id !== ref.id)) {
     return { ok: false, code: "invalid" };
   }
@@ -21627,23 +21630,11 @@ async function listTapdProjectMembers(binding2, token) {
     )
   };
 }
-async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
+async function writeTapdTask(binding2, kind, fields, { author, token }, id) {
   const { route, title: title2, owner, creator, wrapper } = tapdTaskResource[kind];
   const params = new URLSearchParams({ workspace_id: binding2.projectId });
-  let previous = null;
-  if (edit) {
-    const existing = await getTapdTask({ ...binding2, kind, sourceId: "tapd", id: edit.id }, token);
-    if (!existing.ok) {
-      return existing;
-    }
-    if (!existing.value) {
-      return { ok: false, code: "not-found" };
-    }
-    if (existing.value.modified !== edit.expectedModified) {
-      return { ok: false, code: "conflict" };
-    }
-    previous = existing.value;
-    params.set("id", edit.id);
+  if (id) {
+    params.set("id", id);
     params.set("current_user", author);
   } else {
     if (!fields.title) {
@@ -21672,10 +21663,40 @@ async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
   }
   const saved = object({ [wrapper]: taskIdentity }).safeParse(result.value);
   const identity2 = saved.success ? saved.data[wrapper] : void 0;
-  if (!identity2 || String(identity2.workspace_id) !== binding2.projectId || edit && edit.id !== identity2.id) {
+  if (!identity2 || String(identity2.workspace_id) !== binding2.projectId || id && id !== identity2.id) {
     return { ok: false, code: "invalid" };
   }
-  const items = parseTapdTasks([result.value], kind, binding2.projectId);
+  const ref = { ...binding2, sourceId: "tapd", kind, id: identity2.id };
+  return { ok: true, value: { ref, data: result.value } };
+}
+async function createTapdTask(binding2, kind, fields, session) {
+  const result = await writeTapdTask(binding2, kind, fields, session);
+  return result.ok ? { ok: true, value: result.value.ref } : result;
+}
+async function saveTapdTask(binding2, kind, fields, session, edit) {
+  let previous = null;
+  if (edit) {
+    const existing = await getTapdTask(
+      { ...binding2, kind, sourceId: "tapd", id: edit.id },
+      session.token
+    );
+    if (!existing.ok) {
+      return existing;
+    }
+    if (!existing.value) {
+      return { ok: false, code: "not-found" };
+    }
+    if (existing.value.modified !== edit.expectedModified) {
+      return { ok: false, code: "conflict" };
+    }
+    previous = existing.value;
+  }
+  const result = await writeTapdTask(binding2, kind, fields, session, edit?.id);
+  if (!result.ok) {
+    return result;
+  }
+  const { ref, data } = result.value;
+  const items = parseTapdTasks([data], kind, binding2.projectId);
   const description = fields.description === void 0 ? previous?.description : tapdParagraphHtml(fields.description);
   if (items?.[0]) {
     const [item] = items;
@@ -21687,8 +21708,7 @@ async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
     }
     return { ok: true, value: item };
   }
-  const ref = { ...binding2, sourceId: "tapd", kind, id: identity2.id };
-  const refreshed = await getTapdTask(ref, token);
+  const refreshed = await getTapdTask(ref, session.token);
   if (refreshed.ok && refreshed.value) {
     return { ok: true, value: refreshed.value };
   }
@@ -21701,7 +21721,7 @@ async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
       url: tapdTaskUrl(ref.projectId, kind, ref.id),
       status: previous?.status ?? "",
       modified: previous?.modified ?? "",
-      creator: previous?.creator ?? author,
+      creator: previous?.creator ?? session.author,
       title: fields.title ?? previous?.title ?? "",
       assignee: fields.assignee ?? previous?.assignee ?? "",
       ...previous?.statusLabel ? { statusLabel: previous.statusLabel } : {},
@@ -21856,6 +21876,167 @@ async function updateTapdStatus(ref, expectedStatus, status2, { author, token })
     ok: true,
     value: { ...current.value, status: option.id, statusLabel: option.label }
   };
+}
+
+// worker/tapd/tapd-submissions.ts
+var tapdSubmissionIdSchema = uuid2().transform((id) => id.toLowerCase());
+var projectSchema = object({ id: tapdTaskIdSchema, name: string2() });
+var kindSchema = _enum2(["story", "bug"]);
+var tapdSubmissionSchema = strictObject({
+  submissionId: tapdSubmissionIdSchema,
+  project: string2().trim().min(1).max(4e3),
+  kind: kindSchema,
+  fields: strictObject(tapdCreateTaskSchema.shape.fields.pick({
+    title: true,
+    description: true,
+    assignee: true
+  }).shape)
+});
+var recordFields = {
+  fingerprint: string2().regex(/^[a-f0-9]{64}$/),
+  project: projectSchema,
+  kind: kindSchema
+};
+var rejectionSchema = _enum2(["credentials", "permission", "rate-limit"]);
+var recordSchema = discriminatedUnion("status", [
+  object({ ...recordFields, status: literal("pending") }),
+  object({ ...recordFields, status: literal("created"), id: tapdTaskIdSchema }),
+  object({ ...recordFields, status: literal("rejected"), reason: rejectionSchema })
+]);
+var storageError = { ok: false, code: "storage" };
+async function fingerprint({ project: project2, kind, fields }) {
+  const input2 = JSON.stringify([project2, kind, fields.title, fields.description, fields.assignee]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input2));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+function createTapdSubmissions(storage) {
+  const active = /* @__PURE__ */ new Set();
+  const keyFor = (accountId, submissionId) => `tapd-submission:${accountId}:${submissionId}`;
+  async function read(key2) {
+    try {
+      const stored = await storage.get(key2);
+      if (stored == null) {
+        return { ok: true, value: null };
+      }
+      const parsed = recordSchema.safeParse(stored);
+      return parsed.success ? { ok: true, value: parsed.data } : storageError;
+    } catch {
+      return storageError;
+    }
+  }
+  async function persist(key2, record2) {
+    try {
+      await storage.set(key2, record2);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async function receipt(submissionId, record2, connection) {
+    const summary = { submissionId, project: record2.project, kind: record2.kind };
+    if (record2.status === "pending") {
+      return { ok: true, value: { ...summary, status: "pending" } };
+    }
+    if (record2.status === "rejected") {
+      return { ok: true, value: { ...summary, status: "rejected", reason: record2.reason } };
+    }
+    const { id, kind, project: project2 } = record2;
+    const item = await getTapdTask(
+      { connectionId: connection.id, projectId: project2.id, sourceId: "tapd", kind, id },
+      connection.token,
+      { requireAssignee: true }
+    );
+    const details = { ...summary, id, url: tapdTaskUrl(project2.id, kind, id) };
+    if (!item.ok || !item.value) {
+      return { ok: true, value: { ...details, status: "pending" } };
+    }
+    return {
+      ok: true,
+      value: { ...details, status: "created", assignee: item.value.assignee }
+    };
+  }
+  async function submit(input2, connection) {
+    const { submissionId, kind, fields } = input2;
+    const key2 = keyFor(connection.id, submissionId);
+    if (active.has(key2)) {
+      return { ok: false, code: "busy" };
+    }
+    active.add(key2);
+    try {
+      const stored = await read(key2);
+      if (!stored.ok) {
+        return stored;
+      }
+      const inputFingerprint = await fingerprint(input2);
+      if (stored.value) {
+        return stored.value.fingerprint === inputFingerprint ? await receipt(submissionId, stored.value, connection) : { ok: false, code: "conflict" };
+      }
+      const projects = await listTapdProjects(connection.author, connection.token);
+      if (!projects.ok) {
+        return projects;
+      }
+      const exact = projects.value.find(({ id }) => id === input2.project);
+      const matches = exact ? [exact] : projects.value.filter(({ name }) => name === input2.project);
+      if (matches.length !== 1) {
+        return matches.length === 0 ? { ok: false, code: "project-not-found" } : { ok: false, code: "project-ambiguous", matches };
+      }
+      const [project2] = matches;
+      const binding2 = { connectionId: connection.id, projectId: project2.id };
+      let assignee2;
+      if (fields.assignee) {
+        const members2 = await listTapdProjectMembers(binding2, connection.token);
+        if (!members2.ok) {
+          return members2;
+        }
+        const exact2 = members2.value.find(({ nick }) => nick === fields.assignee);
+        const matches2 = exact2 ? [exact2] : members2.value.filter(({ name }) => name === fields.assignee);
+        if (matches2.length !== 1) {
+          return matches2.length === 0 ? { ok: false, code: "assignee-not-found" } : { ok: false, code: "assignee-ambiguous", matches: matches2 };
+        }
+        assignee2 = matches2[0].nick;
+      }
+      const pending = { fingerprint: inputFingerprint, project: project2, kind, status: "pending" };
+      if (!await persist(key2, pending)) {
+        return storageError;
+      }
+      const created = await createTapdTask(binding2, kind, { ...fields, assignee: assignee2 }, connection);
+      if (!created.ok) {
+        const reason = rejectionSchema.safeParse(created.code);
+        if (reason.success) {
+          const rejected = { ...pending, status: "rejected", reason: reason.data };
+          await persist(key2, rejected);
+          return receipt(submissionId, rejected, connection);
+        }
+        return receipt(submissionId, pending, connection);
+      }
+      const saved = { ...pending, status: "created", id: created.value.id };
+      if (!await persist(key2, saved)) {
+        return {
+          ok: true,
+          value: {
+            submissionId,
+            project: project2,
+            kind,
+            id: saved.id,
+            url: tapdTaskUrl(project2.id, kind, saved.id),
+            status: "pending",
+            reason: "storage"
+          }
+        };
+      }
+      return receipt(submissionId, saved, connection);
+    } finally {
+      active.delete(key2);
+    }
+  }
+  async function result(submissionId, connection) {
+    const stored = await read(keyFor(connection.id, submissionId));
+    if (!stored.ok) {
+      return stored;
+    }
+    return stored.value ? receipt(submissionId, stored.value, connection) : { ok: false, code: "not-found" };
+  }
+  return { submit, result };
 }
 
 // worker/workspaces.ts
@@ -22028,6 +22209,7 @@ function reference(session, payload) {
 }
 function activate(orca) {
   const imagePreview = createTapdImagePreview();
+  const submissions = createTapdSubmissions(orca.storage);
   async function getSession() {
     const stored = await orca.secrets.get(connectionKey);
     if (!stored) {
@@ -22110,6 +22292,12 @@ function activate(orca) {
     "create",
     project.extend(tapdCreateTaskSchema.pick({ kind: true, fields: true }).shape),
     ({ projectId, kind, fields }, session) => saveTapdTask(binding(session, projectId), kind, fields, session)
+  );
+  withSession("submit-work-item", tapdSubmissionSchema, submissions.submit);
+  withSession(
+    "submission-result",
+    external_exports.strictObject({ submissionId: tapdSubmissionIdSchema }),
+    ({ submissionId }, session) => submissions.result(submissionId, session)
   );
   withSession(
     "edit",

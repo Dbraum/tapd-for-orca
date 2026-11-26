@@ -155,7 +155,8 @@ function taskDetails(task: z.infer<typeof rawTaskSchema>, kind: TapdTaskKind) {
 export function parseTapdTasks(
   value: unknown,
   kind: TapdTaskKind,
-  projectId: string
+  projectId: string,
+  options?: { requireAssignee: boolean }
 ): ExternalTask[] | null {
   const entry = tapdTaskResource[kind]
   const rows = z.array(z.record(z.string(), z.unknown())).safeParse(value)
@@ -169,6 +170,9 @@ export function parseTapdTasks(
       return null
     }
     const task = item.data
+    if (options?.requireAssignee && task[entry.owner] === undefined) {
+      return null
+    }
     const labels = [...new Set(task.label?.split('|').map((label) => label.trim()))]
       .filter((label) => label.length > 0 && label.length <= 200)
       .slice(0, 20)
@@ -279,7 +283,8 @@ export async function listTapdTasks(
 
 export async function getTapdTask(
   ref: ExternalTaskRef,
-  token: string
+  token: string,
+  options?: { requireAssignee: boolean }
 ): Promise<ExternalTaskResult<ExternalTask | null>> {
   const kind = kindSchema.safeParse(ref.kind)
   if (!kind.success || !isTapdProjectId(ref.projectId) || !tapdId.safeParse(ref.id).success) {
@@ -292,7 +297,7 @@ export async function getTapdTask(
   if (!result.ok) {
     return result
   }
-  const items = parseTapdTasks(result.value, kind.data, ref.projectId)
+  const items = parseTapdTasks(result.value, kind.data, ref.projectId, options)
   if (!items || items.some((item) => item.id !== ref.id)) {
     return { ok: false, code: 'invalid' }
   }

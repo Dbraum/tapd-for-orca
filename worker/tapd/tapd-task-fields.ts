@@ -52,31 +52,17 @@ export async function listTapdProjectMembers(
   }
 }
 
-type Edit = { id: string; expectedModified: string }
-
-export async function saveTapdTask(
+async function writeTapdTask(
   binding: TaskBinding,
   kind: TapdTaskKind,
   fields: TapdTaskFields,
   { author, token }: Session,
-  edit?: Edit
-): Promise<ExternalTaskResult<ExternalTask>> {
+  id?: string
+): Promise<ExternalTaskResult<{ ref: TapdTaskRef; data: unknown }>> {
   const { route, title, owner, creator, wrapper } = tapdTaskResource[kind]
   const params = new URLSearchParams({ workspace_id: binding.projectId })
-  let previous: ExternalTask | null = null
-  if (edit) {
-    const existing = await getTapdTask({ ...binding, kind, sourceId: 'tapd', id: edit.id }, token)
-    if (!existing.ok) {
-      return existing
-    }
-    if (!existing.value) {
-      return { ok: false, code: 'not-found' }
-    }
-    if (existing.value.modified !== edit.expectedModified) {
-      return { ok: false, code: 'conflict' }
-    }
-    previous = existing.value
-    params.set('id', edit.id)
+  if (id) {
+    params.set('id', id)
     params.set('current_user', author)
   } else {
     if (!fields.title) {
@@ -108,11 +94,56 @@ export async function saveTapdTask(
   if (
     !identity ||
     String(identity.workspace_id) !== binding.projectId ||
-    (edit && edit.id !== identity.id)
+    (id && id !== identity.id)
   ) {
     return { ok: false, code: 'invalid' }
   }
-  const items = parseTapdTasks([result.value], kind, binding.projectId)
+  const ref: TapdTaskRef = { ...binding, sourceId: 'tapd', kind, id: identity.id }
+  return { ok: true, value: { ref, data: result.value } }
+}
+
+export async function createTapdTask(
+  binding: TaskBinding,
+  kind: TapdTaskKind,
+  fields: TapdTaskFields,
+  session: Session
+): Promise<ExternalTaskResult<TapdTaskRef>> {
+  const result = await writeTapdTask(binding, kind, fields, session)
+  return result.ok ? { ok: true, value: result.value.ref } : result
+}
+
+type Edit = { id: string; expectedModified: string }
+
+export async function saveTapdTask(
+  binding: TaskBinding,
+  kind: TapdTaskKind,
+  fields: TapdTaskFields,
+  session: Session,
+  edit?: Edit
+): Promise<ExternalTaskResult<ExternalTask>> {
+  let previous: ExternalTask | null = null
+  if (edit) {
+    const existing = await getTapdTask(
+      { ...binding, kind, sourceId: 'tapd', id: edit.id },
+      session.token
+    )
+    if (!existing.ok) {
+      return existing
+    }
+    if (!existing.value) {
+      return { ok: false, code: 'not-found' }
+    }
+    if (existing.value.modified !== edit.expectedModified) {
+      return { ok: false, code: 'conflict' }
+    }
+    previous = existing.value
+  }
+  const result = await writeTapdTask(binding, kind, fields, session, edit?.id)
+  if (!result.ok) {
+    return result
+  }
+  const { ref, data } = result.value
+  const items = parseTapdTasks([data], kind, binding.projectId)
   const description =
     fields.description === undefined ? previous?.description : tapdParagraphHtml(fields.description)
   if (items?.[0]) {
@@ -125,8 +156,7 @@ export async function saveTapdTask(
     }
     return { ok: true, value: item }
   }
-  const ref: TapdTaskRef = { ...binding, sourceId: 'tapd', kind, id: identity.id }
-  const refreshed = await getTapdTask(ref, token)
+  const refreshed = await getTapdTask(ref, session.token)
   if (refreshed.ok && refreshed.value) {
     return { ok: true, value: refreshed.value }
   }
@@ -139,7 +169,7 @@ export async function saveTapdTask(
       url: tapdTaskUrl(ref.projectId, kind, ref.id),
       status: previous?.status ?? '',
       modified: previous?.modified ?? '',
-      creator: previous?.creator ?? author,
+      creator: previous?.creator ?? session.author,
       title: fields.title ?? previous?.title ?? '',
       assignee: fields.assignee ?? previous?.assignee ?? '',
       ...(previous?.statusLabel ? { statusLabel: previous.statusLabel } : {}),
