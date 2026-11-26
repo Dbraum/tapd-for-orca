@@ -26,12 +26,12 @@ function errorCode(status: number): ExternalTaskResult<never> {
 
 async function tapdRequest(
   path: string,
-  params: URLSearchParams,
+  params: URLSearchParams | FormData,
   token: string,
   method: 'GET' | 'POST'
 ): Promise<ExternalTaskResult<unknown>> {
   const url = new URL(path, API)
-  if (method === 'GET') {
+  if (method === 'GET' && params instanceof URLSearchParams) {
     url.search = params.toString()
   }
   try {
@@ -61,6 +61,6 @@ export function tapdGet(path: string, params: URLSearchParams, token: string) {
   return tapdRequest(path, params, token, 'GET')
 }
 
-export function tapdPost(path: string, params: URLSearchParams, token: string) {
+export function tapdPost(path: string, params: URLSearchParams | FormData, token: string) {
   return tapdRequest(path, params, token, 'POST')
 }

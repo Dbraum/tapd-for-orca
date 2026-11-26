@@ -10,14 +10,17 @@
   "scripts": {
     "build": "node build.mjs",
     "package": "node build.mjs dist",
+    "package:agent": "node build.mjs dist/agent --agent",
     "check": "tsc --noEmit && node --check panel/panel.mjs && node --check panel/view.mjs",
     "test": "node --test"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "marked": "17.0.6",
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@types/node": "22.20.7",
     "esbuild": "0.28.2",
     "typescript": "7.0.2"
   }

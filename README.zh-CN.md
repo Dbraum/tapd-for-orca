@@ -23,6 +23,12 @@ orca plugin install Dbraum/tapd-for-orca@main
 
 插件通过受信任的 Node worker 访问 TAPD。令牌存放在 Orca 的加密插件密钥库，请求 TAPD 时发送到 `api.tapd.cn`。工单与工作区的关联存放在插件自己的存储中。工作区和 Agent 权限用于执行你确认的创建、打开和启动操作。
 
+## Agent 预览
+
+在 macOS 上使用 Node.js 22+ 运行 `npm ci` 和 `npm run package:agent`，然后通过 Orca 的「添加插件」安装 `dist/agent`。使用支持插件 MCP 的 Orca 构建，并在宿主启用 `ORCA_MCP_SERVERS=1`。确认 MCP 列表中 TAPD 服务已对 Codex 和目标工作区启用，再启动新的 Codex Chat。每个 Orca 配置单独构建预览包。
+
+Agent 会为用户明确要求创建的工单生成提交编号。重试时沿用该编号并查询原单。随单最多上传 5 个本地文件，每个最大 10 MiB，也可以向原单补传。会话截图需在 Agent 中有可读取的本地路径。上传后的文件名含附件编号，以便在 TAPD 上传响应缺少附件 ID 时核验。状态为「待核验」时，查询原提交或用同一附件编号复查。
+
 ## 本地开发
 
 ```sh

@@ -190,5 +190,20 @@ export function createTapdSubmissions(storage: PluginWorkerOrcaApi['storage']) {
       : { ok: false, code: 'not-found' } as const
   }
 
-  return { submit, result }
+  async function attachmentTarget(submissionId: string, connection: Connection) {
+    const stored = await read(keyFor(connection.id, submissionId))
+    if (!stored.ok) {
+      return stored
+    }
+    const item = stored.value
+    if (!item) {
+      return { ok: false, code: 'not-found' } as const
+    }
+    if (item.status !== 'created') {
+      return { ok: false, code: 'work-item-unavailable' } as const
+    }
+    return { ok: true, value: { projectId: item.project.id, kind: item.kind, id: item.id } } as const
+  }
+
+  return { submit, result, attachmentTarget }
 }

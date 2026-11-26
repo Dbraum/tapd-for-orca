@@ -6,6 +6,7 @@ import { tapdCommentBodySchema, tapdCommentPageSchema } from './tapd/contracts/t
 import { tapdCreateTaskSchema, tapdEditTaskSchema } from './tapd/contracts/tapd-task-fields'
 import { tapdStatusUpdateSchema } from './tapd/contracts/tapd-task-status'
 import { addTapdComment, listTapdComments } from './tapd/tapd-task-comments'
+import { createTapdAttachmentUploads, tapdAttachmentInputSchema } from './tapd/tapd-attachment-uploads'
 import { createTapdImagePreview } from './tapd/tapd-image-preview'
 import { listTapdProjectMembers, saveTapdTask } from './tapd/tapd-task-fields'
 import {
@@ -21,6 +22,9 @@ import {
   tapdSubmissionSchema
 } from './tapd/tapd-submissions'
 import { registerWorkspaceActions } from './workspaces'
+
+type Handler = (input: unknown) => Promise<unknown>
+export type TapdAgentHandlers = { projects: Handler; submit: Handler; result: Handler; upload: Handler }
 
 const connectionKey = 'tapd-connection'
 const tokenSchema = z
@@ -45,9 +49,13 @@ function reference(session: Session, payload: z.infer<typeof task>) {
   return { ...payload, ...binding(session, payload.projectId), sourceId: 'tapd' as const }
 }
 
-export default function activate(orca: PluginWorkerOrcaApi): void {
+export default function activate(
+  orca: PluginWorkerOrcaApi,
+  startAgent?: (handlers: TapdAgentHandlers) => void
+): void {
   const imagePreview = createTapdImagePreview()
   const submissions = createTapdSubmissions(orca.storage)
+  const attachments = createTapdAttachmentUploads(orca.storage)
   async function getSession(): Promise<Session | null> {
     const stored = await orca.secrets.get(connectionKey)
     if (!stored) {
@@ -57,19 +65,26 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
     return result.success ? result.data : null
   }
 
-  function withSession<Schema extends z.ZodType, Result>(
-    name: string,
+  function sessionHandler<Schema extends z.ZodType, Result>(
     schema: Schema,
     execute: (value: z.output<Schema>, session: Session) => Promise<Result>
   ) {
-    orca.panels.handle(name, async (payload) => {
+    return async (payload: unknown) => {
       const data = schema.safeParse(payload)
       if (!data.success) {
         return invalid
       }
       const session = await getSession()
       return session ? execute(data.data, session) : { ok: false, code: 'credentials' }
-    })
+    }
+  }
+
+  function withSession<Schema extends z.ZodType, Result>(
+    name: string,
+    schema: Schema,
+    execute: (value: z.output<Schema>, session: Session) => Promise<Result>
+  ) {
+    orca.panels.handle(name, sessionHandler(schema, execute))
   }
 
   orca.panels.handle('connection', async () => {
@@ -99,9 +114,10 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
     imagePreview.clear()
     return { ok: true }
   })
-  withSession('projects', z.object({}), async (_input, { author, token }) =>
+  const projects = sessionHandler(z.object({}), async (_input, { author, token }) =>
     listTapdProjects(author, token)
   )
+  orca.panels.handle('projects', projects)
   withSession(
     'items',
     externalTaskQuerySchema.omit({ connectionId: true }).extend({
@@ -133,12 +149,22 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
     ({ projectId, kind, fields }, session) =>
       saveTapdTask(binding(session, projectId), kind, fields, session)
   )
-  withSession('submit-work-item', tapdSubmissionSchema, submissions.submit)
-  withSession(
-    'submission-result',
+  const submit = sessionHandler(tapdSubmissionSchema, submissions.submit)
+  const result = sessionHandler(
     z.strictObject({ submissionId: tapdSubmissionIdSchema }),
     ({ submissionId }, session) => submissions.result(submissionId, session)
   )
+  const upload = sessionHandler(
+    tapdAttachmentInputSchema.extend({ submissionId: tapdSubmissionIdSchema }),
+    async ({ submissionId, ...file }, session) => {
+      const target = await submissions.attachmentTarget(submissionId, session)
+      return target.ok ? attachments.upload(submissionId, target.value, file, session) : target
+    }
+  )
+  orca.panels.handle('submit-work-item', submit)
+  orca.panels.handle('submission-result', result)
+  orca.panels.handle('upload-submission-attachment', upload)
+  startAgent?.({ projects, submit, result, upload })
   withSession(
     'edit',
     task.extend(tapdEditTaskSchema.pick({ expectedModified: true, fields: true }).shape),

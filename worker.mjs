@@ -19859,7 +19859,7 @@ function errorCode(status2) {
 }
 async function tapdRequest(path, params, token, method) {
   const url2 = new URL(path, API);
-  if (method === "GET") {
+  if (method === "GET" && params instanceof URLSearchParams) {
     url2.search = params.toString();
   }
   try {
@@ -21194,13 +21194,159 @@ async function addTapdComment(ref, body, author, token) {
   return { ok: true, value: toComment(response.data.Comment) };
 }
 
+// worker/tapd/tapd-attachments.ts
+var attachmentSchema = object({
+  Attachment: object({
+    id: tapdTaskIdSchema,
+    workspace_id: union([tapdTaskIdSchema, number2().int().positive()]).transform(String),
+    entry_id: tapdTaskIdSchema,
+    type: string2(),
+    filename: string2()
+  })
+});
+function attachmentScope({ projectId, kind, id }) {
+  return { workspace_id: projectId, type: kind, entry_id: id };
+}
+async function findTapdAttachment(target, filename, token) {
+  const params = new URLSearchParams({ ...attachmentScope(target), filename, limit: "200" });
+  const result = await tapdGet("attachments", params, token);
+  if (!result.ok) {
+    return result;
+  }
+  const rows = array(attachmentSchema).safeParse(result.value);
+  if (!rows.success) {
+    return { ok: false, code: "invalid" };
+  }
+  const matching = rows.data.map(({ Attachment }) => Attachment).filter(
+    (item) => item.workspace_id === target.projectId && item.entry_id === target.id && item.type === target.kind && item.filename === filename
+  );
+  if (matching.length > 1) {
+    return { ok: false, code: "conflict" };
+  }
+  const [attachment] = matching;
+  return { ok: true, value: attachment ? { id: attachment.id, filename } : null };
+}
+function postTapdAttachment(target, filename, file2, token) {
+  const form = new FormData();
+  for (const [field, value] of Object.entries(attachmentScope(target))) {
+    form.set(field, value);
+  }
+  form.set("file", file2, filename);
+  return tapdPost("files/upload_attachment", form, token);
+}
+
+// worker/tapd/tapd-attachment-uploads.ts
+var MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+var tapdAttachmentInputSchema = strictObject({
+  attachmentId: uuid2().transform((id) => id.toLowerCase()),
+  name: string2().trim().min(1).max(160).regex(/^[^/\\\u0000-\u001f\u007f]+$/u),
+  contentType: string2().max(120).regex(/^[a-z0-9.+-]+\/[a-z0-9.+-]+$/iu).default("application/octet-stream"),
+  base64: base642().min(1).max(4 * Math.ceil(MAX_ATTACHMENT_BYTES / 3))
+});
+var storageError = { ok: false, code: "storage" };
+var classifiableRejection = _enum2(["credentials", "permission", "rate-limit"]);
+var recordFields = {
+  digest: string2(),
+  filename: string2()
+};
+var recordSchema = discriminatedUnion("status", [
+  object({ ...recordFields, status: literal("pending") }),
+  object({ ...recordFields, status: literal("retryable") }),
+  object({ ...recordFields, status: literal("uploaded"), id: tapdTaskIdSchema })
+]);
+function createTapdAttachmentUploads(storage) {
+  const active = /* @__PURE__ */ new Set();
+  async function persist(key2, record2) {
+    try {
+      await storage.set(key2, record2);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async function read(key2) {
+    try {
+      const value = await storage.get(key2);
+      if (value == null) {
+        return { ok: true, value: null };
+      }
+      const parsed = recordSchema.safeParse(value);
+      return parsed.success ? { ok: true, value: parsed.data } : storageError;
+    } catch {
+      return storageError;
+    }
+  }
+  async function upload(submissionId, target, input2, connection) {
+    const { attachmentId, name, contentType, base64: base643 } = input2;
+    const key2 = `tapd-attachment:${connection.id}:${submissionId}:${attachmentId}`;
+    if (active.has(key2)) {
+      return { ok: false, code: "busy" };
+    }
+    active.add(key2);
+    try {
+      const stored = await read(key2);
+      if (!stored.ok) {
+        return stored;
+      }
+      let bytes;
+      try {
+        bytes = Uint8Array.from(atob(base643), (character) => character.charCodeAt(0));
+      } catch {
+        return { ok: false, code: "invalid" };
+      }
+      if (bytes.byteLength > MAX_ATTACHMENT_BYTES) {
+        return { ok: false, code: "attachment-too-large" };
+      }
+      const hash2 = await crypto.subtle.digest("SHA-256", bytes);
+      const digest = Array.from(new Uint8Array(hash2), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      const dot = name.lastIndexOf(".");
+      const filename = dot > 0 ? `${name.slice(0, dot)}-${attachmentId}${name.slice(dot)}` : `${name}-${attachmentId}`;
+      const previous = stored.value;
+      if (previous && (previous.digest !== digest || previous.filename !== filename)) {
+        return { ok: false, code: "conflict" };
+      }
+      const summary = { submissionId, attachmentId, name, filename };
+      if (previous?.status === "uploaded") {
+        return { ok: true, value: { ...summary, status: "uploaded", id: previous.id } };
+      }
+      const pending = { digest, filename, status: "pending" };
+      if (previous?.status !== "pending") {
+        if (!await persist(key2, pending)) {
+          return storageError;
+        }
+        const result = await postTapdAttachment(
+          target,
+          filename,
+          new Blob([bytes], { type: contentType }),
+          connection.token
+        );
+        if (!result.ok && classifiableRejection.safeParse(result.code).success) {
+          if (await persist(key2, { ...pending, status: "retryable" })) {
+            return { ok: true, value: { ...summary, status: "retryable", reason: result.code } };
+          }
+        }
+      }
+      const item = await findTapdAttachment(target, filename, connection.token);
+      if (!item.ok || !item.value) {
+        return { ok: true, value: { ...summary, status: "pending" } };
+      }
+      const id = item.value.id;
+      await persist(key2, { ...pending, status: "uploaded", id });
+      return { ok: true, value: { ...summary, status: "uploaded", id } };
+    } finally {
+      active.delete(key2);
+    }
+  }
+  return { upload };
+}
+
 // worker/tapd/tapd-image-preview.ts
 var MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 var CHUNK_BYTES = 3 * 192 * 1024;
 var IMAGE_CACHE_LIMIT = 3;
 var IMAGE_CACHE_MS = 12e4;
 var tapdImageOrigins = /* @__PURE__ */ new Set(["https://www.tapd.cn", "https://tapd.cn", "https://file.tapd.cn"]);
-var attachmentSchema = object({
+var attachmentSchema2 = object({
   Attachment: object({
     workspace_id: union([string2(), number2().int().safe()]),
     download_url: string2().url().max(8192)
@@ -21265,7 +21411,7 @@ async function downloadTapdImage(projectId, imagePath, token) {
     token
   );
   if (!result.ok) return result;
-  const parsed = attachmentSchema.safeParse(result.value);
+  const parsed = attachmentSchema2.safeParse(result.value);
   if (!parsed.success || String(parsed.data.Attachment.workspace_id) !== projectId) {
     return { ok: false, code: "invalid" };
   }
@@ -21892,18 +22038,18 @@ var tapdSubmissionSchema = strictObject({
     assignee: true
   }).shape)
 });
-var recordFields = {
+var recordFields2 = {
   fingerprint: string2().regex(/^[a-f0-9]{64}$/),
   project: projectSchema,
   kind: kindSchema
 };
 var rejectionSchema = _enum2(["credentials", "permission", "rate-limit"]);
-var recordSchema = discriminatedUnion("status", [
-  object({ ...recordFields, status: literal("pending") }),
-  object({ ...recordFields, status: literal("created"), id: tapdTaskIdSchema }),
-  object({ ...recordFields, status: literal("rejected"), reason: rejectionSchema })
+var recordSchema2 = discriminatedUnion("status", [
+  object({ ...recordFields2, status: literal("pending") }),
+  object({ ...recordFields2, status: literal("created"), id: tapdTaskIdSchema }),
+  object({ ...recordFields2, status: literal("rejected"), reason: rejectionSchema })
 ]);
-var storageError = { ok: false, code: "storage" };
+var storageError2 = { ok: false, code: "storage" };
 async function fingerprint({ project: project2, kind, fields }) {
   const input2 = JSON.stringify([project2, kind, fields.title, fields.description, fields.assignee]);
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input2));
@@ -21918,10 +22064,10 @@ function createTapdSubmissions(storage) {
       if (stored == null) {
         return { ok: true, value: null };
       }
-      const parsed = recordSchema.safeParse(stored);
-      return parsed.success ? { ok: true, value: parsed.data } : storageError;
+      const parsed = recordSchema2.safeParse(stored);
+      return parsed.success ? { ok: true, value: parsed.data } : storageError2;
     } catch {
-      return storageError;
+      return storageError2;
     }
   }
   async function persist(key2, record2) {
@@ -21997,7 +22143,7 @@ function createTapdSubmissions(storage) {
       }
       const pending = { fingerprint: inputFingerprint, project: project2, kind, status: "pending" };
       if (!await persist(key2, pending)) {
-        return storageError;
+        return storageError2;
       }
       const created = await createTapdTask(binding2, kind, { ...fields, assignee: assignee2 }, connection);
       if (!created.ok) {
@@ -22036,7 +22182,21 @@ function createTapdSubmissions(storage) {
     }
     return stored.value ? receipt(submissionId, stored.value, connection) : { ok: false, code: "not-found" };
   }
-  return { submit, result };
+  async function attachmentTarget(submissionId, connection) {
+    const stored = await read(keyFor(connection.id, submissionId));
+    if (!stored.ok) {
+      return stored;
+    }
+    const item = stored.value;
+    if (!item) {
+      return { ok: false, code: "not-found" };
+    }
+    if (item.status !== "created") {
+      return { ok: false, code: "work-item-unavailable" };
+    }
+    return { ok: true, value: { projectId: item.project.id, kind: item.kind, id: item.id } };
+  }
+  return { submit, result, attachmentTarget };
 }
 
 // worker/workspaces.ts
@@ -22250,26 +22410,30 @@ function binding(session, projectId) {
 function reference(session, payload) {
   return { ...payload, ...binding(session, payload.projectId), sourceId: "tapd" };
 }
-function activate(orca) {
+function activate(orca, startAgent) {
   const imagePreview = createTapdImagePreview();
   const submissions = createTapdSubmissions(orca.storage);
+  const attachments = createTapdAttachmentUploads(orca.storage);
   async function getSession() {
     const stored = await orca.secrets.get(connectionKey);
     if (!stored) {
       return null;
     }
-    const result = sessionSchema.safeParse(JSON.parse(stored));
-    return result.success ? result.data : null;
+    const result2 = sessionSchema.safeParse(JSON.parse(stored));
+    return result2.success ? result2.data : null;
   }
-  function withSession(name, schema, execute) {
-    orca.panels.handle(name, async (payload) => {
+  function sessionHandler(schema, execute) {
+    return async (payload) => {
       const data = schema.safeParse(payload);
       if (!data.success) {
         return invalid3;
       }
       const session = await getSession();
       return session ? execute(data.data, session) : { ok: false, code: "credentials" };
-    });
+    };
+  }
+  function withSession(name, schema, execute) {
+    orca.panels.handle(name, sessionHandler(schema, execute));
   }
   orca.panels.handle("connection", async () => {
     const session = await getSession();
@@ -22298,11 +22462,11 @@ function activate(orca) {
     imagePreview.clear();
     return { ok: true };
   });
-  withSession(
-    "projects",
+  const projects = sessionHandler(
     external_exports.object({}),
     async (_input, { author, token }) => listTapdProjects(author, token)
   );
+  orca.panels.handle("projects", projects);
   withSession(
     "items",
     externalTaskQuerySchema.omit({ connectionId: true }).extend({
@@ -22336,12 +22500,22 @@ function activate(orca) {
     project.extend(tapdCreateTaskSchema.pick({ kind: true, fields: true }).shape),
     ({ projectId, kind, fields }, session) => saveTapdTask(binding(session, projectId), kind, fields, session)
   );
-  withSession("submit-work-item", tapdSubmissionSchema, submissions.submit);
-  withSession(
-    "submission-result",
+  const submit = sessionHandler(tapdSubmissionSchema, submissions.submit);
+  const result = sessionHandler(
     external_exports.strictObject({ submissionId: tapdSubmissionIdSchema }),
     ({ submissionId }, session) => submissions.result(submissionId, session)
   );
+  const upload = sessionHandler(
+    tapdAttachmentInputSchema.extend({ submissionId: tapdSubmissionIdSchema }),
+    async ({ submissionId, ...file2 }, session) => {
+      const target = await submissions.attachmentTarget(submissionId, session);
+      return target.ok ? attachments.upload(submissionId, target.value, file2, session) : target;
+    }
+  );
+  orca.panels.handle("submit-work-item", submit);
+  orca.panels.handle("submission-result", result);
+  orca.panels.handle("upload-submission-attachment", upload);
+  startAgent?.({ projects, submit, result, upload });
   withSession(
     "edit",
     task.extend(tapdEditTaskSchema.pick({ expectedModified: true, fields: true }).shape),
@@ -22358,15 +22532,15 @@ function activate(orca) {
     (input2, session) => updateTapdStatus(reference(session, input2), input2.expectedStatus, input2.status, session)
   );
   withSession("comments", task.extend({ page: tapdCommentPageSchema }), async (input2, session) => {
-    const result = await listTapdComments(reference(session, input2), input2.page, session.token);
-    if (result.ok) {
-      for (const item of result.value.items) {
+    const result2 = await listTapdComments(reference(session, input2), input2.page, session.token);
+    if (result2.ok) {
+      for (const item of result2.value.items) {
         if (item.body.length > 6e3) {
           item.body = `${item.body.slice(0, 6e3)}\u2026`;
         }
       }
     }
-    return result;
+    return result2;
   });
   withSession(
     "comment",

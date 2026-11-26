@@ -27,6 +27,12 @@ Review the permissions and approve the installation in Orca. On the command line
 
 The plugin runs a trusted Node worker. It stores your token in Orca’s encrypted plugin secrets and sends it to `api.tapd.cn` with the TAPD requests you make. Workspace links are stored in the plugin’s own storage. Workspace and agent permissions let the plugin open or create workspaces and launch an agent after confirmation.
 
+## Agent preview
+
+On macOS with Node.js 22+, run `npm ci` and `npm run package:agent`, then install `dist/agent` through Orca's Add plugin action. Use an Orca build that supports plugin MCP contributions with `ORCA_MCP_SERVERS=1` enabled on the host. Enable the TAPD MCP server for Codex and the target workspace, then start a new Codex Chat. Build a separate preview package for each Orca profile.
+
+Agent submissions use a stable submission ID. Reusing it lets a retry check the original work item. Each submission supports up to five user-selected local files of up to 10 MiB each, with later uploads to the same work item. Chat screenshots need a local path the agent can read. Uploaded file names include an attachment ID so the worker can verify the upload when TAPD does not return an attachment ID.
+
 ## Develop
 
 ```sh
