@@ -2,7 +2,11 @@
 
 export const byId = (id) => document.getElementById(id)
 export const field = (form, name) => form.elements.namedItem(name)
-export const kinds = { story: '需求', bug: '缺陷', task: '任务' }
+export const kinds = { story: '需求', bug: '缺陷', task: '任务', board: '看板卡片' }
+const statusLabels = {
+  task: { open: '未开始', progressing: '进行中', done: '已完成' },
+  board: { open: '未完成', done: '已完成' }
+}
 const panel = byId('panel')
 const notice = byId('notice')
 
@@ -15,7 +19,14 @@ export function view(id) {
   for (const section of panel.children) {
     section.hidden = section.id !== id
   }
+  byId('list-navigation').hidden = id !== 'list' && id !== 'todos'
+  byId('show-project-items').setAttribute('aria-pressed', String(id === 'list'))
+  byId('show-todos').setAttribute('aria-pressed', String(id === 'todos'))
   window.scrollTo(0, 0)
+}
+
+export function statusText(kind, item) {
+  return item.statusLabel || statusLabels[kind]?.[item.status] || item.status
 }
 
 const errors = {
@@ -50,7 +61,9 @@ export async function run(action, loading = '加载中…') {
   panel.inert = true
   panel.setAttribute('aria-busy', 'true')
   const settings = byId('settings-button')
+  const navigation = byId('list-navigation')
   settings.disabled = true
+  navigation.inert = true
   announce(loading, 'loading')
   try {
     await action()
@@ -67,6 +80,7 @@ export async function run(action, loading = '加载中…') {
     panel.inert = false
     panel.setAttribute('aria-busy', 'false')
     settings.disabled = false
+    navigation.inert = false
     const search = document.querySelector('[data-focus-next]')
     if (search) {
       delete search.dataset.focusNext

@@ -34,6 +34,16 @@ header {
   border-bottom: 1px solid var(--orca-border);
   background: var(--orca-background);
 }
+#list-navigation {
+  flex-basis: 100%;
+}
+#todo-filters select {
+  flex: 1 1 90px;
+  width: auto;
+}
+#todo-results .bar {
+  overflow-wrap: anywhere;
+}
 main {
   padding-block: 12px;
 }

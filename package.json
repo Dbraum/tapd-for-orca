@@ -1,6 +1,6 @@
 {
   "name": "tapd-for-orca",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "license": "MIT",
@@ -10,7 +10,7 @@
   "scripts": {
     "build": "node build.mjs",
     "package": "node build.mjs dist",
-    "check": "tsc --noEmit && node --check panel/panel.mjs && node --check panel/view.mjs",
+    "check": "tsc --noEmit && node --check panel/panel.mjs && node --check panel/view.mjs && node --check panel/todos.mjs",
     "test": "node --test"
   },
   "dependencies": {

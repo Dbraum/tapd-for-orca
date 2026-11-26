@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { PluginWorkerOrcaApi } from './plugin-worker-api'
-import { tapdTaskIdSchema, tapdTaskKindSchema } from './tapd/contracts/tapd-task-ref'
+import { tapdTaskIdSchema, tapdWorkItemKindSchema } from './tapd/contracts/tapd-task-ref'
 
 const identity = z.string().min(1).max(4096)
 const orcaProjects = z.object({
@@ -33,7 +33,7 @@ const workspaceProjects = z.object({
 const linkedWorkspace = z.object({ id: identity, name: z.string() })
 const taskKeySchema = z.object({
   projectId: tapdTaskIdSchema,
-  kind: tapdTaskKindSchema,
+  kind: tapdWorkItemKindSchema,
   id: tapdTaskIdSchema
 })
 const agents = z.enum(['default', 'codex', 'claude', 'gemini', 'opencode', 'codebuddy'])
@@ -72,7 +72,6 @@ async function focusedWorkspace(orca: PluginWorkerOrcaApi) {
 
 export function registerWorkspaceActions(
   orca: PluginWorkerOrcaApi,
-  task: typeof taskKeySchema,
   account: () => Promise<string | null>
 ): void {
   const starting = new Set<string>()
@@ -103,7 +102,7 @@ export function registerWorkspaceActions(
   })
 
   orca.panels.handle('workspaces', async (payload) => {
-    const input = task.safeParse(payload)
+    const input = taskKeySchema.safeParse(payload)
     const user = await account()
     if (!input.success || !user) {
       return []
@@ -120,7 +119,7 @@ export function registerWorkspaceActions(
   })
 
   orca.panels.handle('open-workspace', async (payload) => {
-    const input = task.extend({ workspaceId: identity }).safeParse(payload)
+    const input = taskKeySchema.extend({ workspaceId: identity }).safeParse(payload)
     const user = await account()
     if (!input.success || !user) {
       return invalid

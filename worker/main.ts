@@ -15,6 +15,7 @@ import {
   listTapdTasks
 } from './tapd/tapd-task-source'
 import { listTapdStatusOptions, updateTapdStatus } from './tapd/tapd-task-status'
+import { createTapdTodoList, getTapdBoardTodo, tapdTodoListQuerySchema } from './tapd/tapd-todos'
 import { registerWorkspaceActions } from './workspaces'
 
 const connectionKey = 'tapd-connection'
@@ -42,6 +43,7 @@ function reference(session: Session, payload: z.infer<typeof task>) {
 
 export default function activate(orca: PluginWorkerOrcaApi): void {
   const imagePreview = createTapdImagePreview()
+  const todos = createTapdTodoList()
   async function getSession(): Promise<Session | null> {
     const stored = await orca.secrets.get(connectionKey)
     if (!stored) {
@@ -86,11 +88,13 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
       JSON.stringify({ id: account.id, author: account.name, token })
     )
     imagePreview.clear()
+    todos.clear()
     return { ok: true, value: account }
   })
   orca.panels.handle('disconnect', async () => {
     await orca.secrets.delete(connectionKey)
     imagePreview.clear()
+    todos.clear()
     return { ok: true }
   })
   withSession('projects', z.object({}), async (_input, { author, token }) =>
@@ -107,6 +111,10 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
   )
   withSession('item', task, (input, session) =>
     getTapdTask(reference(session, input), session.token)
+  )
+  withSession('todo-list', tapdTodoListQuerySchema, async (query, session) => todos.read(query, session))
+  withSession('todo-board-item', project.extend({ id: tapdTaskIdSchema }), ({ projectId, id }, { token }) =>
+    getTapdBoardTodo(projectId, id, token)
   )
   withSession(
     'image-preview',
@@ -157,5 +165,5 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
   withSession('comment', task.extend({ body: tapdCommentBodySchema }), (input, session) =>
     addTapdComment(reference(session, input), input.body, session.author, session.token)
   )
-  registerWorkspaceActions(orca, task, async () => (await getSession())?.id ?? null)
+  registerWorkspaceActions(orca, async () => (await getSession())?.id ?? null)
 }

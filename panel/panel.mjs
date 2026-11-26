@@ -15,10 +15,12 @@ import {
   richText,
   row,
   run,
+  statusText,
   submit,
   tapd,
   view
 } from './view.mjs'
+import { createTodoView } from './todos.mjs'
 
 let account = null
 let projects = []
@@ -27,18 +29,23 @@ let kind = 'story'
 let items = []
 let itemPage = 0
 let task = null
+let detailContext = null
+let todosDirty = false
 let commentPage = 0
 let statusMenu = null
 let initialFields = null
 let destinations = []
 
 const selectionKey = () => `selected-project:${account.id}`
-const ref = () => ({ projectId: project.id, kind, id: task.id })
-const taskStatusLabels = new Map([
-  ['open', '未开始'],
-  ['progressing', '进行中'],
-  ['done', '已完成']
-])
+const ref = () => ({ projectId: detailContext.project.id, kind: detailContext.kind, id: task.id })
+const todoView = createTodoView((item) => void run(() => openDetail(item.id, {
+  project: item.project, kind: item.kind, typeLabel: item.typeLabel, source: 'todos'
+})))
+
+function showTodos() {
+  todoView.show(projects, project?.id, todosDirty)
+  todosDirty = false
+}
 
 function connectionView() {
   const connected = Boolean(account)
@@ -179,16 +186,18 @@ async function loadWorkspaces() {
 
 function renderTask() {
   const details = task.details ?? {}
-  byId('item-reference').textContent = `${project.name} · ${kinds[kind]} #${task.id}`
+  const { project: itemProject, kind: itemKind, typeLabel } = detailContext
+  const label = typeLabel && !['STORY', 'BUG', 'TASK', 'ITEM'].includes(typeLabel)
+    ? typeLabel
+    : kinds[typeLabel === 'TASK' ? 'task' : itemKind]
+  byId('item-reference').textContent = `${itemProject.name} · ${label} #${task.id}`
   byId('item-title').textContent = task.title
-  const status =
-    task.statusLabel || (kind === 'task' ? taskStatusLabels.get(task.status) : '') || task.status
   byId('item-badges').replaceChildren(
-    ...[status, task.priority].filter(Boolean).map((value) => node('span', value, 'pill'))
+    ...[statusText(itemKind, task), task.priority].filter(Boolean).map((value) => node('span', value, 'pill'))
   )
-  byId('item-description').replaceChildren(richText(task.description, task.url, project.id))
+  byId('item-description').replaceChildren(richText(task.description, task.url, itemProject.id))
   const relatedStory = details.relatedStoryId
-    ? externalLink(`/tapd_fe/${project.id}/story/detail/${details.relatedStoryId}`, task.url)
+    ? externalLink(`/tapd_fe/${itemProject.id}/story/detail/${details.relatedStoryId}`, task.url)
     : null
   if (relatedStory) {
     relatedStory.textContent = `#${details.relatedStoryId}`
@@ -198,7 +207,7 @@ function renderTask() {
     ['创建人', task.creator],
     ['开发人员', details.developer],
     ['所属模块', details.module],
-    [kind === 'story' ? '父需求' : '关联需求', relatedStory],
+    [itemKind === 'story' ? '父需求' : '关联需求', relatedStory],
     ['迭代 ID', details.iterationId],
     ['进度', details.progress == null ? null : `${details.progress}%`],
     ['预计开始', details.begin],
@@ -236,7 +245,7 @@ async function loadComments(reset) {
   const comments = result.items.map(({ author, created, body }) => {
     const article = node('article', '', 'comment stack compact')
     const content = node('div', '', 'detail-content')
-    content.append(richText(body, task.url, project.id, '暂无评论内容。'))
+    content.append(richText(body, task.url, detailContext.project.id, '暂无评论内容。'))
     article.append(node('small', `${author} · ${created}`), content)
     return article
   })
@@ -252,21 +261,31 @@ async function loadComments(reset) {
   byId('more-comments').hidden = !result.hasMore
 }
 
-async function openDetail(id) {
-  const loaded = await tapd('item', { projectId: project.id, kind, id })
+async function openDetail(id, context = { project, kind, source: 'list' }) {
+  const payload = { projectId: context.project.id, id }
+  const board = context.kind === 'board'
+  const loaded = board
+    ? await tapd('todo-board-item', payload)
+    : await tapd('item', { ...payload, kind: context.kind })
   if (!loaded) {
     announce('工单不存在或已被移动。', 'error')
     return
   }
+  detailContext = context
   task = loaded
   renderTask()
   byId('comment-form').reset()
   byId('comments').replaceChildren()
   byId('linked-workspaces').replaceChildren()
   byId('more-comments').hidden = true
+  byId('comments-section').hidden = board
+  byId('edit').hidden = board
+  byId('load-status').hidden = board
+  byId('detail-back').textContent = context.source === 'todos' ? '← 我的待办' : '← 工单列表'
+  if (context.source === 'todos') todoView.pause()
   byId('start').textContent = '开始'
   view('detail')
-  const results = await Promise.allSettled([loadComments(true), loadWorkspaces()])
+  const results = await Promise.allSettled([board ? Promise.resolve() : loadComments(true), loadWorkspaces()])
   if (results[0].status === 'rejected') {
     byId('comments').append(node('p', '无法加载评论，可返回列表后重试。', 'muted'))
   }
@@ -290,11 +309,12 @@ async function openEditor(editing) {
   for (const [name, value] of Object.entries(initialFields ?? {})) {
     field(form, name).value = value
   }
-  byId('editor-title').textContent = `${editing ? '编辑' : '新建'}${kinds[kind]}`
+  const scope = editing ? detailContext : { project, kind }
+  byId('editor-title').textContent = `${editing ? '编辑' : '新建'}${kinds[scope.kind]}`
   byId('members').replaceChildren()
   view('editor')
   try {
-    const members = await tapd('members', { projectId: project.id })
+    const members = await tapd('members', { projectId: scope.project.id })
     byId('members').replaceChildren(
       ...members.map(({ nick, name }) => new Option(name || nick, nick))
     )
@@ -304,11 +324,12 @@ async function openEditor(editing) {
 }
 
 async function openStart() {
+  const { project: itemProject, kind: itemKind } = detailContext
   const form = byId('start-form')
   form.reset()
   const optionsForStart = await request('orca-projects')
   destinations = optionsForStart.destinations
-  const saved = await orca.storage.get(`destination:${account.id}:${project.id}`)
+  const saved = await orca.storage.get(`destination:${account.id}:${itemProject.id}`)
   const options = destinations.map(
     ({ name, hostId }, index) =>
       new Option(hostId === 'local' ? name : `${name} · ${hostId}`, String(index))
@@ -325,9 +346,9 @@ async function openStart() {
     agent.prepend(new Option('使用 Orca 默认 Agent', 'default'))
     agent.value = 'default'
   }
-  field(form, 'name').value = `tapd-${kind}-${task.id}`
+  field(form, 'name').value = `tapd-${itemKind}-${task.id}`
   const context = [
-    `TAPD ${kinds[kind]} #${task.id}`,
+    `TAPD ${kinds[itemKind]} #${task.id}`,
     task.title,
     task.url,
     '',
@@ -346,6 +367,7 @@ async function openStart() {
 
 on('settings-button', () => {
   announce('')
+  todoView.pause()
   connectionView()
 })
 on('get-token', async (event) => {
@@ -361,10 +383,13 @@ on(
   () =>
     void run(async () => {
       await request('disconnect')
+      todoView.reset()
+      todosDirty = false
       account = null
       projects = []
       project = null
       task = null
+      detailContext = null
       byId('settings-button').hidden = true
       connectionView()
       announce('已断开 TAPD 连接。')
@@ -376,6 +401,8 @@ submit(
     const token = field(form, 'token').value
     field(form, 'token').value = ''
     account = await tapd('connect', { token })
+    todoView.reset()
+    todosDirty = false
     byId('settings-button').hidden = false
     try {
       await loadProjects()
@@ -386,6 +413,25 @@ submit(
   },
   '正在验证 TAPD 连接…'
 )
+on('show-project-items', () => {
+  if (byId('list').hidden) {
+    announce('')
+    todoView.pause()
+    view('list')
+  }
+})
+on('show-todos', () => {
+  if (byId('todos').hidden) {
+    announce('')
+    showTodos()
+  }
+})
+on('refresh-todos', () => void run(async () => {
+  projects = await tapd('projects')
+  if (!byId('project-picker').hidden) renderProjects()
+  todoView.refresh(projects, project?.id)
+  todosDirty = false
+}))
 on('choose-project', () => showProjectPicker(byId('project-picker').hidden))
 on('project-search', renderProjects, 'input')
 on('refresh', () => void run(() => (project ? loadItems(true) : loadProjects())))
@@ -414,6 +460,10 @@ on(
   'detail-back',
   () =>
     void run(async () => {
+      if (detailContext.source === 'todos') {
+        showTodos()
+        return
+      }
       view('list')
       await loadItems(true)
     })
@@ -445,6 +495,7 @@ on('status-cancel', () => {
 submit('status-form', async () => {
   const status = byId('status-options').value
   task = await tapd('status-change', { ...ref(), expectedStatus: statusMenu.current, status })
+  todosDirty = true
   renderTask()
   announce('状态已更新。')
 })
@@ -494,6 +545,7 @@ submit(
     const saved = initialFields
       ? await tapd('edit', { ...ref(), expectedModified: task.modified, fields: changed })
       : await tapd('create', { projectId: project.id, kind, fields: changed })
+    todosDirty = true
     if (initialFields) {
       task = saved
       renderTask()
@@ -552,7 +604,7 @@ submit(
     })
     view('detail')
     await orca.storage
-      .set(`destination:${account.id}:${project.id}`, {
+      .set(`destination:${account.id}:${detailContext.project.id}`, {
         id: destination.id,
         hostId: destination.hostId
       })

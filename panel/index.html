@@ -10,6 +10,10 @@
     <header class="bar spread">
       <h1>TAPD</h1>
       <button id="settings-button" type="button" class="quiet" hidden>连接设置</button>
+      <nav id="list-navigation" class="bar" aria-label="TAPD 列表" hidden>
+        <button id="show-project-items" type="button" aria-pressed="true">项目工单</button>
+        <button id="show-todos" type="button" aria-pressed="false">我的待办</button>
+      </nav>
     </header>
     <div id="notice" role="status" aria-live="polite"></div>
     <main id="panel" aria-busy="true">
@@ -112,6 +116,29 @@
         </div>
       </section>
 
+      <section id="todos" class="stack" aria-labelledby="todos-title" hidden>
+        <div class="bar spread">
+          <h2 id="todos-title" class="grow">我的待办</h2>
+          <button id="refresh-todos" type="button" class="quiet">刷新待办</button>
+        </div>
+        <div id="todo-filters" class="bar">
+          <select id="todo-project" class="grow" aria-label="待办项目">
+            <option value="">全部项目</option>
+          </select>
+          <select id="todo-type" class="grow" aria-label="待办类型">
+            <option value="">全部类型</option>
+          </select>
+          <select id="todo-sort" class="grow" aria-label="待办排序">
+            <option value="due">预计结束</option>
+            <option value="updated">最近更新</option>
+          </select>
+        </div>
+        <p id="todo-summary" class="muted" role="status"></p>
+        <div id="todo-results" class="result-box"></div>
+        <p id="todo-empty" class="muted" hidden>没有符合条件的待办。</p>
+        <button id="more-todos" type="button" hidden>显示更多</button>
+      </section>
+
       <section id="detail" class="stack" aria-labelledby="item-title" hidden>
         <div class="bar spread">
           <button id="detail-back" type="button" class="quiet">← 工单列表</button>
@@ -148,7 +175,7 @@
           <dl id="item-metadata" class="detail-properties"></dl>
           <div id="item-labels" class="bar" hidden></div>
         </section>
-        <section class="stack separator">
+        <section id="comments-section" class="stack separator">
           <h3>评论</h3>
           <div id="comments" class="stack"></div>
           <button id="more-comments" type="button" hidden>加载更多评论</button>

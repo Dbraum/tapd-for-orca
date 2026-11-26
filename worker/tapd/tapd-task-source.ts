@@ -97,6 +97,10 @@ const commonDetailFields = [
   'created', 'begin', 'due', 'completed', 'iteration_id', 'effort', 'effort_completed', 'remain'
 ]
 
+export function tapdOwnerFilter(author: string): string | null {
+  return author && !/[<>|;]/.test(author) ? `USER_OR<${author}>` : null
+}
+
 const rawTaskSchema = z.object({
   id: tapdId,
   workspace_id: tapdProjectId,
@@ -246,10 +250,11 @@ export async function listTapdTasks(
     )
   }
   if (query.assignedToMe) {
-    if (!author || /[<>|;]/.test(author)) {
+    const owner = tapdOwnerFilter(author ?? '')
+    if (!owner) {
       return { ok: false, code: 'invalid' }
     }
-    params.set(entry.owner, `USER_OR<${author}>`)
+    params.set(entry.owner, owner)
   } else if (query.assignee) {
     params.set(entry.owner, query.assignee)
   }

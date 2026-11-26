@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- Browse your TAPD to-dos across projects, including requirements, bugs, tasks, and board cards.
+- Filter by project or type, sort by due date or last update, and see when some projects could not load.
+- Open to-do details and start or reopen linked Orca workspaces from the sidebar.
+
 ## 0.1.1
 
 - Preselect the current Git project when starting an Orca workspace from a TAPD work item.

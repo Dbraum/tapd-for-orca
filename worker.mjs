@@ -9354,8 +9354,8 @@ function ko_default() {
 }
 
 // node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter = (text) => {
-  return text.charAt(0).toUpperCase() + text.slice(1);
+var capitalizeFirstCharacter = (text2) => {
+  return text2.charAt(0).toUpperCase() + text2.slice(1);
 };
 function getUnitTypeFromNumber(number4) {
   const abs = Math.abs(number4);
@@ -15532,12 +15532,12 @@ function describe(description) {
   return ch;
 }
 // @__NO_SIDE_EFFECTS__
-function meta(metadata) {
+function meta(metadata2) {
   const ch = new $ZodCheck({ check: "meta" });
   ch._zod.onattach = [
     (inst) => {
       const existing = globalRegistry.get(inst) ?? {};
-      globalRegistry.add(inst, { ...existing, ...metadata });
+      globalRegistry.add(inst, { ...existing, ...metadata2 });
     }
   ];
   ch._zod.check = () => {
@@ -19789,6 +19789,7 @@ var externalTaskPageSchema = object({
 // worker/tapd/contracts/tapd-task-ref.ts
 var tapdTaskIdSchema = string2().regex(/^[1-9]\d{0,29}$/);
 var tapdTaskKindSchema = _enum2(["story", "bug", "task"]);
+var tapdWorkItemKindSchema = _enum2([...tapdTaskKindSchema.options, "board"]);
 var tapdTaskRefSchema = externalTaskRefSchema.extend({
   sourceId: literal("tapd"),
   kind: tapdTaskKindSchema,
@@ -21098,16 +21099,16 @@ var Xt = b.parse;
 var Jt = x.lex;
 
 // worker/tapd/tapd-text.ts
-function escapeHtmlText(text) {
-  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+function escapeHtmlText(text2) {
+  return text2.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 }
-function tapdParagraphHtml(text) {
-  return `<p>${escapeHtmlText(text).replace(/\r\n?|\n/g, "<br>")}</p>`;
+function tapdParagraphHtml(text2) {
+  return `<p>${escapeHtmlText(text2).replace(/\r\n?|\n/g, "<br>")}</p>`;
 }
 var tapdMarkdown = new D({
   renderer: {
-    html: ({ text }) => escapeHtmlText(text),
-    image: ({ text }) => escapeHtmlText(text),
+    html: ({ text: text2 }) => escapeHtmlText(text2),
+    image: ({ text: text2 }) => escapeHtmlText(text2),
     link(token) {
       if (!externalTaskUrlSchema.safeParse(token.href).success) {
         return this.parser.parseInline(token.tokens);
@@ -21116,11 +21117,11 @@ var tapdMarkdown = new D({
     }
   }
 });
-function tapdMarkdownHtml(text) {
+function tapdMarkdownHtml(text2) {
   try {
-    return tapdMarkdown.parse(text, { async: false, breaks: true }).trim();
+    return tapdMarkdown.parse(text2, { async: false, breaks: true }).trim();
   } catch {
-    return tapdParagraphHtml(text);
+    return tapdParagraphHtml(text2);
   }
 }
 
@@ -21409,6 +21410,9 @@ var commonDetailFields = [
   "effort_completed",
   "remain"
 ];
+function tapdOwnerFilter(author) {
+  return author && !/[<>|;]/.test(author) ? `USER_OR<${author}>` : null;
+}
 var rawTaskSchema = object({
   id: tapdTaskIdSchema,
   workspace_id: tapdProjectId,
@@ -21544,10 +21548,11 @@ async function listTapdTasks(query, token, author) {
     );
   }
   if (query.assignedToMe) {
-    if (!author || /[<>|;]/.test(author)) {
+    const owner = tapdOwnerFilter(author ?? "");
+    if (!owner) {
       return { ok: false, code: "invalid" };
     }
-    params.set(entry.owner, `USER_OR<${author}>`);
+    params.set(entry.owner, owner);
   } else if (query.assignee) {
     params.set(entry.owner, query.assignee);
   }
@@ -21858,6 +21863,300 @@ async function updateTapdStatus(ref, expectedStatus, status2, { author, token })
   };
 }
 
+// worker/tapd/tapd-todos.ts
+var PAGE_SIZE3 = 50;
+var projectIdSchema = external_exports.union([
+  tapdTaskIdSchema,
+  external_exports.number().int().positive().max(Number.MAX_SAFE_INTEGER).transform(String)
+]);
+var rowsSchema = external_exports.array(external_exports.record(external_exports.string(), external_exports.unknown()));
+var text = external_exports.string().trim().max(200).nullish().catch(void 0);
+var rawItemSchema = external_exports.object({
+  id: tapdTaskIdSchema,
+  workspace_id: projectIdSchema.nullish(),
+  project_id: projectIdSchema.nullish(),
+  name: externalTaskSchema.shape.title.optional(),
+  title: externalTaskSchema.shape.title.optional(),
+  status: text,
+  priority: external_exports.union([external_exports.string().trim().max(200), external_exports.number().transform(String)]).nullish().catch(void 0),
+  priority_label: text,
+  v_status: text,
+  due: text,
+  deadline: text,
+  modified: text,
+  workitem_type_id: tapdTaskIdSchema.nullish().catch(void 0),
+  b_board_id: tapdTaskIdSchema.nullish().catch(void 0),
+  owner: text,
+  creator: text,
+  created: text,
+  begin: text,
+  description: externalTaskSchema.shape.description.nullish().catch(void 0)
+});
+var boardResource = { route: "board_cards", wrapper: "BoardCard", title: "name" };
+var resources = { ...tapdTaskResource, board: boardResource };
+var defaultType = { story: "STORY", bug: "BUG", task: "TASK", board: "ITEM" };
+var priorities = /* @__PURE__ */ new Map([["4", "High"], ["3", "Middle"], ["2", "Low"], ["1", "Nice To Have"]]);
+var invalid2 = { ok: false, code: "invalid" };
+function sameProject(item, projectId) {
+  return [item.workspace_id, item.project_id].every((id) => id == null || id === projectId);
+}
+function boardUrl(projectId, boardId, itemId) {
+  return new URL(
+    `${projectId}/board/card_detail_preview/${boardId}/${itemId}`,
+    "https://www.tapd.cn/"
+  ).href;
+}
+function normalizedDue(value) {
+  const date5 = value?.slice(0, 10) ?? "";
+  return /^\d{4}-\d{2}-\d{2}$/.test(date5) && date5 > "1970-01-01" ? date5 : "";
+}
+var displayFields = external_exports.object({ id: tapdTaskIdSchema, status: text, v_status: text, priority_label: text });
+var itemType = external_exports.object({ id: tapdTaskIdSchema, english_name: text, name: text });
+async function metadata(route, wrapper, params, token) {
+  const result = await tapdGet(route, params, token);
+  const records = result.ok && rowsSchema.safeParse(result.value);
+  return records && records.success ? records.data.map((row) => row[wrapper]) : [];
+}
+async function todoMetadata(kind, projectId, items, token) {
+  const display = /* @__PURE__ */ new Map();
+  const categories = /* @__PURE__ */ new Map();
+  if (!items.length || kind === "board" || kind === "task") {
+    return { display, categories };
+  }
+  const ids = items.map(({ id }) => id).join(",");
+  const { route, wrapper } = tapdTaskResource[kind];
+  const fields = new URLSearchParams({
+    workspace_id: projectId,
+    id: ids,
+    limit: String(PAGE_SIZE3),
+    fields: "id,workspace_id,status,workitem_type_id,v_status,priority_label",
+    with_v_status: "1"
+  });
+  if (items.some((item) => !item.v_status || !item.priority_label)) {
+    for (const row of await metadata(route, wrapper, fields, token)) {
+      const parsed = displayFields.safeParse(row);
+      if (parsed.success) {
+        display.set(parsed.data.id, parsed.data);
+      }
+    }
+  }
+  const typeIds = [...new Set(items.flatMap(({ workitem_type_id }) => workitem_type_id ? [workitem_type_id] : []))];
+  if (kind === "story" && typeIds.length) {
+    const params = new URLSearchParams({
+      workspace_id: projectId,
+      id: typeIds.join(","),
+      limit: String(PAGE_SIZE3),
+      fields: "id,english_name,name"
+    });
+    for (const row of await metadata("workitem_types", "WorkitemType", params, token)) {
+      const parsed = itemType.safeParse(row);
+      if (parsed.success) {
+        const { id, english_name, name } = parsed.data;
+        categories.set(id, english_name?.toUpperCase() || name || defaultType.story);
+      }
+    }
+  }
+  return { display, categories };
+}
+async function listTapdTodoPage({ projectId, kind, page }, author, token) {
+  const source = resources[kind];
+  const fields = [
+    "id",
+    "workspace_id",
+    source.title,
+    "status",
+    "modified",
+    "due"
+  ];
+  if (kind === "board") {
+    fields.push("b_board_id", "owner");
+  } else {
+    fields.push("priority", "priority_label", "v_status");
+    if (kind === "story") fields.push("workitem_type_id");
+    if (kind === "bug") fields.push("project_id", "deadline");
+  }
+  const params = new URLSearchParams({
+    workspace_id: projectId,
+    limit: String(PAGE_SIZE3),
+    page: String(page),
+    fields: fields.join(",")
+  });
+  const path = kind === "board" ? source.route : `user_oauth/get_user_todo_${kind}`;
+  if (kind === "board") {
+    const owner = tapdOwnerFilter(author);
+    if (!owner) return invalid2;
+    params.set("owner", owner);
+    params.set("status", "open");
+  } else {
+    params.set("order", "id desc");
+  }
+  const result = await tapdGet(path, params, token);
+  if (!result.ok) return result;
+  const rows = rowsSchema.safeParse(result.value);
+  if (!rows.success) return invalid2;
+  let incomplete = false;
+  const items = rows.data.flatMap((row) => {
+    const parsed = rawItemSchema.safeParse(row[source.wrapper]);
+    if (!parsed.success || !parsed.data[source.title] || !sameProject(parsed.data, projectId)) {
+      incomplete = true;
+      return [];
+    }
+    if (kind === "board" && (parsed.data.status !== "open" || !parsed.data.owner?.split(";").some((owner) => owner.trim() === author))) {
+      return [];
+    }
+    return [parsed.data];
+  });
+  const { display, categories } = await todoMetadata(kind, projectId, items, token);
+  return {
+    ok: true,
+    value: {
+      items: items.map((item) => {
+        const details = display.get(item.id);
+        const priority = details?.priority_label || item.priority_label || item.priority || "";
+        return {
+          id: item.id,
+          title: item[source.title] ?? "",
+          status: item.status ?? "",
+          statusLabel: details?.status === item.status && details?.v_status || item.v_status || "",
+          priority: kind === "bug" ? priority : priorities.get(priority) ?? priority,
+          modified: item.modified ?? "",
+          due: normalizedDue(item.due || item.deadline),
+          typeLabel: categories.get(item.workitem_type_id ?? "") ?? defaultType[kind]
+        };
+      }),
+      hasMore: rows.data.length === PAGE_SIZE3,
+      incomplete
+    }
+  };
+}
+var PANEL_PAGE_SIZE = 30;
+var PARALLEL_REQUESTS = 8;
+var tapdTodoListQuerySchema = external_exports.object({
+  preferredProjectId: tapdTaskIdSchema.optional(),
+  projectId: tapdTaskIdSchema.optional(),
+  type: external_exports.string().trim().min(1).max(200).optional(),
+  order: external_exports.enum(["due", "updated"]).default("due"),
+  page: external_exports.number().int().min(1).max(1e4).default(1),
+  refresh: external_exports.boolean().optional()
+});
+function createTapdTodoList() {
+  let current = null;
+  async function collect(state, session, preferredProjectId) {
+    const result = await listTapdProjects(session.author, session.token);
+    if (current !== state) return;
+    if (!result.ok) {
+      state.error = result;
+      return;
+    }
+    const projects = result.value.sort(
+      (a, b2) => Number(b2.id === preferredProjectId) - Number(a.id === preferredProjectId) || a.name.localeCompare(b2.name)
+    );
+    state.total = projects.length;
+    const kinds = tapdWorkItemKindSchema.options;
+    const jobs = projects.flatMap((project2) => kinds.map((kind) => ({ project: project2, kind })));
+    const unfinished = new Map(projects.map(({ id }) => [id, kinds.length]));
+    let nextJob = 0;
+    await Promise.all(Array.from({ length: Math.min(PARALLEL_REQUESTS, jobs.length) }, async () => {
+      while (current === state && nextJob < jobs.length) {
+        const { project: project2, kind } = jobs[nextJob++];
+        for (let page = 1; current === state; page++) {
+          const result2 = await listTapdTodoPage({ projectId: project2.id, kind, page }, session.author, session.token);
+          if (current !== state) return;
+          if (!result2.ok || result2.value.incomplete) state.failures.add(project2.id);
+          if (!result2.ok) break;
+          for (const item of result2.value.items) {
+            state.items.set(`${project2.id}/${kind}/${item.id}`, { ...item, project: project2, kind });
+          }
+          if (!result2.value.hasMore) break;
+          if (page === 1e4) {
+            state.failures.add(project2.id);
+            break;
+          }
+        }
+        const remaining = (unfinished.get(project2.id) ?? 1) - 1;
+        unfinished.set(project2.id, remaining);
+        if (!remaining) state.finished++;
+      }
+    }));
+  }
+  return {
+    clear() {
+      current = null;
+    },
+    read(query, session) {
+      if (!current || current.accountId !== session.id || query.refresh) {
+        const state = {
+          accountId: session.id,
+          items: /* @__PURE__ */ new Map(),
+          failures: /* @__PURE__ */ new Set(),
+          finished: 0,
+          total: null,
+          loading: true
+        };
+        current = state;
+        void collect(state, session, query.preferredProjectId).catch(() => {
+          state.error = { ok: false, code: "unavailable" };
+        }).finally(() => {
+          state.loading = false;
+        });
+      }
+      if (current.error) return current.error;
+      const items = [...current.items.values()];
+      const visible = items.filter(
+        (item) => (!query.projectId || item.project.id === query.projectId) && (!query.type || item.typeLabel === query.type)
+      );
+      visible.sort((a, b2) => {
+        const deadline = (a.due || "9999").localeCompare(b2.due || "9999");
+        return (query.order === "due" ? deadline : 0) || b2.modified.localeCompare(a.modified) || a.title.localeCompare(b2.title) || a.project.id.localeCompare(b2.project.id) || a.id.localeCompare(b2.id) || a.kind.localeCompare(b2.kind);
+      });
+      const offset = (query.page - 1) * PANEL_PAGE_SIZE;
+      return {
+        ok: true,
+        value: {
+          items: visible.slice(offset, offset + PANEL_PAGE_SIZE),
+          count: visible.length,
+          types: [...new Set(items.map((item) => item.typeLabel))],
+          progress: { loading: current.loading, finished: current.finished, total: current.total },
+          failures: query.projectId ? Number(current.failures.has(query.projectId)) : current.failures.size,
+          hasMore: visible.length > offset + PANEL_PAGE_SIZE
+        }
+      };
+    }
+  };
+}
+async function getTapdBoardTodo(projectId, id, token) {
+  const result = await tapdGet(boardResource.route, new URLSearchParams({
+    workspace_id: projectId,
+    id,
+    limit: "1"
+  }), token);
+  if (!result.ok) return result;
+  const rows = rowsSchema.safeParse(result.value);
+  if (!rows.success) return invalid2;
+  if (!rows.data.length) return { ok: true, value: null };
+  const parsed = rawItemSchema.safeParse(rows.data[0]?.[boardResource.wrapper]);
+  if (!parsed.success || parsed.data.id !== id || parsed.data.workspace_id !== projectId || !parsed.data.b_board_id) {
+    return invalid2;
+  }
+  const item = parsed.data;
+  const normalized = externalTaskSchema.safeParse({
+    id,
+    title: item.name,
+    status: item.status ?? "",
+    assignee: (item.owner ?? "").split(";").filter(Boolean).join(", "),
+    modified: item.modified ?? "",
+    url: boardUrl(projectId, parsed.data.b_board_id, id),
+    ...item.description ? { description: item.description } : {},
+    ...item.creator ? { creator: item.creator } : {},
+    details: {
+      ...item.created ? { created: item.created } : {},
+      ...item.begin ? { begin: item.begin } : {},
+      ...normalizedDue(item.due) ? { due: normalizedDue(item.due) } : {}
+    }
+  });
+  return normalized.success ? { ok: true, value: normalized.data } : invalid2;
+}
+
 // worker/workspaces.ts
 var identity = external_exports.string().min(1).max(4096);
 var orcaProjects = external_exports.object({
@@ -21890,7 +22189,7 @@ var workspaceProjects = external_exports.object({
 var linkedWorkspace = external_exports.object({ id: identity, name: external_exports.string() });
 var taskKeySchema = external_exports.object({
   projectId: tapdTaskIdSchema,
-  kind: tapdTaskKindSchema,
+  kind: tapdWorkItemKindSchema,
   id: tapdTaskIdSchema
 });
 var agents = external_exports.enum(["default", "codex", "claude", "gemini", "opencode", "codebuddy"]);
@@ -21908,7 +22207,7 @@ var startSchema = taskKeySchema.extend({
   prompt: external_exports.string().max(4096).optional(),
   skipSetup: external_exports.boolean().optional()
 });
-var invalid2 = { ok: false, code: "invalid" };
+var invalid3 = { ok: false, code: "invalid" };
 function eligibleProjects({ projects }) {
   return projects.filter(
     ({ kind, hostId, hidden }) => kind === "git" && !hidden && (hostId === "local" || hostId?.startsWith("ssh:"))
@@ -21922,7 +22221,7 @@ async function focusedWorkspace(orca) {
   const { workspaces: listed } = workspaceProjects.parse(await orca.host.call("workspace.list"));
   return listed.find(({ id }) => id === context.workspaceId);
 }
-function registerWorkspaceActions(orca, task2, account) {
+function registerWorkspaceActions(orca, account) {
   const starting = /* @__PURE__ */ new Set();
   const latestLinks = /* @__PURE__ */ new Map();
   const linkKey = (user, { projectId, kind, id }) => `workspaces:${user}:${projectId}:${kind}:${id}`;
@@ -21942,7 +22241,7 @@ function registerWorkspaceActions(orca, task2, account) {
     return { destinations, current, defaultAgentSupported: orca.host.has("agent.launchDefault") };
   });
   orca.panels.handle("workspaces", async (payload) => {
-    const input2 = task2.safeParse(payload);
+    const input2 = taskKeySchema.safeParse(payload);
     const user = await account();
     if (!input2.success || !user) {
       return [];
@@ -21958,14 +22257,14 @@ function registerWorkspaceActions(orca, task2, account) {
     );
   });
   orca.panels.handle("open-workspace", async (payload) => {
-    const input2 = task2.extend({ workspaceId: identity }).safeParse(payload);
+    const input2 = taskKeySchema.extend({ workspaceId: identity }).safeParse(payload);
     const user = await account();
     if (!input2.success || !user) {
-      return invalid2;
+      return invalid3;
     }
     const links = await readLinks(linkKey(user, input2.data));
     if (!links.some(({ id }) => id === input2.data.workspaceId)) {
-      return invalid2;
+      return invalid3;
     }
     await orca.host.call("workspace.open", { workspaceId: input2.data.workspaceId });
     return { ok: true };
@@ -21974,7 +22273,7 @@ function registerWorkspaceActions(orca, task2, account) {
     const input2 = startSchema.safeParse(payload);
     const user = await account();
     if (!input2.success || !user) {
-      return invalid2;
+      return invalid3;
     }
     const { destination, hostId, name, baseBranch, agent, prompt, skipSetup } = input2.data;
     const key2 = linkKey(user, input2.data);
@@ -22062,7 +22361,7 @@ var sessionSchema = external_exports.object({
 });
 var project = external_exports.object({ projectId: tapdTaskIdSchema });
 var task = project.extend({ kind: tapdTaskKindSchema, id: tapdTaskIdSchema });
-var invalid3 = { ok: false, code: "invalid" };
+var invalid4 = { ok: false, code: "invalid" };
 function binding(session, projectId) {
   return { connectionId: session.id, projectId };
 }
@@ -22071,6 +22370,7 @@ function reference(session, payload) {
 }
 function activate(orca) {
   const imagePreview = createTapdImagePreview();
+  const todos = createTapdTodoList();
   async function getSession() {
     const stored = await orca.secrets.get(connectionKey);
     if (!stored) {
@@ -22083,7 +22383,7 @@ function activate(orca) {
     orca.panels.handle(name, async (payload) => {
       const data = schema.safeParse(payload);
       if (!data.success) {
-        return invalid3;
+        return invalid4;
       }
       const session = await getSession();
       return session ? execute(data.data, session) : { ok: false, code: "credentials" };
@@ -22096,7 +22396,7 @@ function activate(orca) {
   orca.panels.handle("connect", async (payload) => {
     const input2 = external_exports.object({ token: tokenSchema }).safeParse(payload);
     if (!input2.success) {
-      return invalid3;
+      return invalid4;
     }
     const { token } = input2.data;
     const identity2 = await identifyTapdConnection(token);
@@ -22109,11 +22409,13 @@ function activate(orca) {
       JSON.stringify({ id: account.id, author: account.name, token })
     );
     imagePreview.clear();
+    todos.clear();
     return { ok: true, value: account };
   });
   orca.panels.handle("disconnect", async () => {
     await orca.secrets.delete(connectionKey);
     imagePreview.clear();
+    todos.clear();
     return { ok: true };
   });
   withSession(
@@ -22133,6 +22435,12 @@ function activate(orca) {
     "item",
     task,
     (input2, session) => getTapdTask(reference(session, input2), session.token)
+  );
+  withSession("todo-list", tapdTodoListQuerySchema, async (query, session) => todos.read(query, session));
+  withSession(
+    "todo-board-item",
+    project.extend({ id: tapdTaskIdSchema }),
+    ({ projectId, id }, { token }) => getTapdBoardTodo(projectId, id, token)
   );
   withSession(
     "image-preview",
@@ -22185,7 +22493,7 @@ function activate(orca) {
     task.extend({ body: tapdCommentBodySchema }),
     (input2, session) => addTapdComment(reference(session, input2), input2.body, session.author, session.token)
   );
-  registerWorkspaceActions(orca, task, async () => (await getSession())?.id ?? null);
+  registerWorkspaceActions(orca, async () => (await getSession())?.id ?? null);
 }
 export {
   activate as default

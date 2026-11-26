@@ -3,8 +3,8 @@
   "manifestVersion": 2,
   "id": "tapd-sidebar",
   "name": "TAPD Sidebar for Orca",
-  "version": "0.1.1",
-  "description": "Manage TAPD requirements, bugs and tasks in Orca's sidebar.",
+  "version": "0.2.0",
+  "description": "Browse TAPD work items and cross-project to-dos in Orca's sidebar.",
   "license": "MIT",
   "repository": "https://github.com/Dbraum/tapd-for-orca",
   "engines": {
