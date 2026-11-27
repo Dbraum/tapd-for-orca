@@ -25,6 +25,8 @@ Review the permissions and approve the installation in Orca. On the command line
 
 Select **我的待办** (My To-Dos) to view requirements, bugs, tasks, and board cards across projects. Filter by project or type and sort by due date or most recent update. Open a board card to read its details, visit it in TAPD, or start an Orca workspace.
 
+In a TAPD requirement, use **关联任务** (Linked tasks) to open existing tasks or **新建关联任务** (Create linked task) to add one. The task appears in the list after saving. When starting from a linked task, the prompt preview includes the task and its requirement. Select **同时发送上下文给 Agent** (Send context to the agent) to send the previewed text.
+
 ## Access and data
 
 The plugin runs a trusted Node worker. It stores your token in Orca’s encrypted plugin secrets and sends it to `api.tapd.cn` with the TAPD requests you make. Workspace links are stored in the plugin’s own storage. Workspace and agent permissions let the plugin open or create workspaces and launch an agent after confirmation.

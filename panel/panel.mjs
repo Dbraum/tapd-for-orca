@@ -30,10 +30,12 @@ let items = []
 let itemPage = 0
 let task = null
 let detailContext = null
+let relatedTasks = null
 let todosDirty = false
 let commentPage = 0
 let statusMenu = null
 let initialFields = null
+let editorStory = null
 let destinations = []
 
 const selectionKey = () => `selected-project:${account.id}`
@@ -124,9 +126,9 @@ async function loadProjects() {
   await selectProject(previous ?? (projects.length === 1 ? projects[0].id : null))
 }
 
-function taskMetadata(item) {
+function taskMetadata(item, itemKind) {
   const values = [
-    item.statusLabel || item.status,
+    statusText(itemKind, item),
     item.assignee || '未分配',
     item.priority,
     item.modified
@@ -239,6 +241,71 @@ function renderTask() {
   byId('status-form').hidden = true
 }
 
+function relatedTaskStatus(message) {
+  const status = byId('related-task-status')
+  status.textContent = message
+  status.hidden = !message
+}
+
+function showRelatedTasks() {
+  const isStory = detailContext.kind === 'story' && detailContext.typeLabel !== 'TASK'
+  relatedTasks = isStory ? { context: detailContext, storyId: task.id, page: 0, ids: new Set() } : null
+  byId('related-tasks').hidden = !isStory
+  byId('related-task-results').replaceChildren()
+  byId('more-related-tasks').hidden = true
+  if (isStory) void loadRelatedTasks()
+}
+
+function addRelatedTask(list, item, newest = false) {
+  if (list.ids.has(item.id)) return
+  const { context, storyId } = list
+  const taskContext = {
+    project: context.project,
+    kind: 'task',
+    source: context.source,
+    parentStory: { id: storyId, context }
+  }
+  const taskRow = row(item.title, taskMetadata(item, 'task'), () =>
+    void run(() => openDetail(item.id, taskContext))
+  )
+  const results = byId('related-task-results')
+  list.ids.add(item.id)
+  if (newest) results.prepend(taskRow)
+  else results.append(taskRow)
+  return taskRow
+}
+
+async function loadRelatedTasks() {
+  const list = relatedTasks
+  if (!list) return
+
+  const { context, storyId } = list
+  const page = list.page + 1
+  const more = byId('more-related-tasks')
+  more.disabled = true
+  relatedTaskStatus('正在加载关联任务…')
+  try {
+    const result = await tapd('story-tasks', { projectId: context.project.id, storyId, page })
+    if (list !== relatedTasks) return
+
+    for (const item of result.items) {
+      addRelatedTask(list, item)
+    }
+    list.page = page
+    relatedTaskStatus(list.ids.size ? '' : '暂无关联任务。')
+    more.textContent = '加载更多任务'
+    more.hidden = !result.hasMore
+  } catch {
+    if (list !== relatedTasks) return
+
+    relatedTaskStatus('无法加载关联任务。')
+    more.textContent = '重试'
+    more.hidden = false
+  } finally {
+    if (list === relatedTasks) more.disabled = false
+  }
+}
+
 async function loadComments(reset) {
   const page = reset ? 1 : commentPage + 1
   const result = await tapd('comments', { ...ref(), page })
@@ -281,10 +348,13 @@ async function openDetail(id, context = { project, kind, source: 'list' }) {
   byId('comments-section').hidden = board
   byId('edit').hidden = board
   byId('load-status').hidden = board
-  byId('detail-back').textContent = context.source === 'todos' ? '← 我的待办' : '← 工单列表'
+  byId('detail-back').textContent = context.parentStory
+    ? '← 需求详情'
+    : context.source === 'todos' ? '← 我的待办' : '← 工单列表'
   if (context.source === 'todos') todoView.pause()
   byId('start').textContent = '开始'
   view('detail')
+  showRelatedTasks()
   const results = await Promise.allSettled([board ? Promise.resolve() : loadComments(true), loadWorkspaces()])
   if (results[0].status === 'rejected') {
     byId('comments').append(node('p', '无法加载评论，可返回列表后重试。', 'muted'))
@@ -294,9 +364,10 @@ async function openDetail(id, context = { project, kind, source: 'list' }) {
   }
 }
 
-async function openEditor(editing) {
+async function openEditor(editing, story = null) {
   const form = byId('edit-form')
   form.reset()
+  editorStory = story
   initialFields = editing
     ? {
         title: task.title,
@@ -309,8 +380,12 @@ async function openEditor(editing) {
   for (const [name, value] of Object.entries(initialFields ?? {})) {
     field(form, name).value = value
   }
-  const scope = editing ? detailContext : { project, kind }
-  byId('editor-title').textContent = `${editing ? '编辑' : '新建'}${kinds[scope.kind]}`
+  const scope = editing ? detailContext : { project: story?.context.project ?? project, kind }
+  byId('editor-title').textContent = story ? '新建关联任务' : `${editing ? '编辑' : '新建'}${kinds[scope.kind]}`
+  const storyLabel = byId('editor-story')
+  storyLabel.textContent = story ? `所属需求 · ${task.title} #${story.storyId}` : ''
+  storyLabel.hidden = !story
+  field(form, 'description').placeholder = story ? '交付行为\n验收标准\n阻塞于（没有则填「无」）' : ''
   byId('members').replaceChildren()
   view('editor')
   try {
@@ -323,13 +398,49 @@ async function openEditor(editing) {
   }
 }
 
+async function saveRelatedTask(list, fields) {
+  const { context, storyId } = list
+  const saved = await tapd('create-story-task', { projectId: context.project.id, storyId, fields })
+  todosDirty = true
+  view('detail')
+  if (saved.details?.relatedStoryId !== storyId) {
+    announce(`任务 #${saved.id} 已创建，TAPD 尚未确认所属需求。请在 TAPD 核对关联。`, 'error')
+    return
+  }
+  const taskRow = addRelatedTask(list, saved, true)
+  if (taskRow) taskRow.dataset.focusNext = ''
+  if (list.page && byId('more-related-tasks').hidden) relatedTaskStatus('')
+  announce('关联任务已创建。')
+}
+
+function linkedTaskPrompt(item, projectId, storyId, story, limit) {
+  const storyUrl = story?.url ?? new URL(`/tapd_fe/${projectId}/story/detail/${storyId}`, item.url).href
+  const taskHeading = [`TAPD 任务 #${item.id}`, item.title.slice(0, 200), item.url, '', '任务描述与验收标准'].join('\n')
+  const storyHeading = [`所属需求 #${storyId}`, story?.title.slice(0, 200), storyUrl, '', '需求目标与范围']
+    .filter((line) => line !== undefined).join('\n')
+  const handoff = '若需求变更影响任务验收，请先由负责人确认并更新任务。请在 Git PR 中回链任务，并将验证结果记录到 TAPD 任务。'
+  const taskBody = plainText(item.description) || '请打开任务核对交付行为和验收标准。'
+  const storyBody = plainText(story?.description) || '请打开需求核对目标和范围。'
+  const budget = limit - taskHeading.length - storyHeading.length - handoff.length - 6
+  const taskLimit = Math.min(taskBody.length, Math.max(Math.floor(budget * 2 / 3), budget - storyBody.length))
+  const shorten = (body, size) => body.length > size ? `${body.slice(0, size - 1)}…` : body
+  return [taskHeading, shorten(taskBody, taskLimit), '', storyHeading,
+    shorten(storyBody, budget - taskLimit), '', handoff].join('\n')
+}
+
 async function openStart() {
   const { project: itemProject, kind: itemKind } = detailContext
   const form = byId('start-form')
   form.reset()
-  const optionsForStart = await request('orca-projects')
+  const storyId = itemKind === 'task' ? task.details?.relatedStoryId : undefined
+  const [optionsForStart, saved, story] = await Promise.all([
+    request('orca-projects'),
+    orca.storage.get(`destination:${account.id}:${itemProject.id}`),
+    storyId
+      ? tapd('item', { projectId: itemProject.id, kind: 'story', id: storyId }).catch(() => null)
+      : null
+  ])
   destinations = optionsForStart.destinations
-  const saved = await orca.storage.get(`destination:${account.id}:${itemProject.id}`)
   const options = destinations.map(
     ({ name, hostId }, index) =>
       new Option(hostId === 'local' ? name : `${name} · ${hostId}`, String(index))
@@ -347,21 +458,26 @@ async function openStart() {
     agent.value = 'default'
   }
   field(form, 'name').value = `tapd-${itemKind}-${task.id}`
-  const context = [
-    `TAPD ${kinds[itemKind]} #${task.id}`,
-    task.title,
-    task.url,
-    '',
-    '工单描述（来自 TAPD）',
-    plainText(task.description)
-  ]
   const prompt = field(form, 'prompt')
-  prompt.value = context.join('\n').slice(0, prompt.maxLength)
+  if (storyId) {
+    prompt.value = linkedTaskPrompt(task, itemProject.id, storyId, story, prompt.maxLength)
+  } else {
+    prompt.value = [
+      `TAPD ${kinds[itemKind]} #${task.id}`,
+      task.title,
+      task.url,
+      '',
+      '工单描述（来自 TAPD）',
+      plainText(task.description)
+    ].join('\n').slice(0, prompt.maxLength)
+  }
   field(form, 'sendPrompt').disabled = !agent.value
   byId('confirm-start').disabled = !destinations.length
   view('workspace')
   if (!destinations.length) {
     announce('请先在 Orca 添加一个 Git 项目。', 'error')
+  } else if (storyId && !story) {
+    announce('暂时无法读取所属需求。工单上下文已保留需求链接。', 'error')
   }
 }
 
@@ -390,6 +506,7 @@ on(
       project = null
       task = null
       detailContext = null
+      relatedTasks = null
       byId('settings-button').hidden = true
       connectionView()
       announce('已断开 TAPD 连接。')
@@ -456,10 +573,16 @@ on('kinds', (event) => {
 })
 submit('filters', () => loadItems(true))
 on('more-items', () => void run(() => loadItems(false)))
+on('more-related-tasks', () => void loadRelatedTasks())
 on(
   'detail-back',
   () =>
     void run(async () => {
+      const { parentStory } = detailContext
+      if (parentStory) {
+        await openDetail(parentStory.id, parentStory.context)
+        return
+      }
       if (detailContext.source === 'todos') {
         showTodos()
         return
@@ -511,10 +634,11 @@ submit(
   '正在发布评论…'
 )
 on('new-item', () => void run(() => openEditor(false)))
+on('new-related-task', () => void run(() => openEditor(false, relatedTasks)))
 on('edit', () => void run(() => openEditor(true)))
 on('edit-cancel', () => {
   announce('')
-  view(initialFields ? 'detail' : 'list')
+  view(initialFields || editorStory ? 'detail' : 'list')
 })
 submit(
   'edit-form',
@@ -538,6 +662,10 @@ submit(
         ]
       })
     )
+    if (editorStory) {
+      await saveRelatedTask(editorStory, changed)
+      return
+    }
     if (initialFields && !Object.keys(changed).length) {
       view('detail')
       return

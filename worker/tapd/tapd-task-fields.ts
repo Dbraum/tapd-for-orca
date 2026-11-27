@@ -18,7 +18,8 @@ const memberSchema = z.object({
 })
 const taskIdentity = z.object({
   id: tapdTaskIdSchema,
-  workspace_id: z.union([z.string(), z.number().int().positive()])
+  workspace_id: z.union([z.string(), z.number().int().positive()]),
+  story_id: z.unknown().optional()
 })
 
 type Session = { author: string; token: string }
@@ -59,7 +60,7 @@ export async function saveTapdTask(
   kind: TapdTaskKind,
   fields: TapdTaskFields,
   { author, token }: Session,
-  edit?: Edit
+  { edit, storyId }: { edit?: Edit; storyId?: string } = {}
 ): Promise<ExternalTaskResult<ExternalTask>> {
   const { route, title, owner, creator, wrapper } = tapdTaskResource[kind]
   const params = new URLSearchParams({ workspace_id: binding.projectId })
@@ -83,6 +84,7 @@ export async function saveTapdTask(
       return { ok: false, code: 'invalid' }
     }
     params.set(creator, author)
+    if (storyId) params.set('story_id', storyId)
   }
   const formFields: [string, string | undefined][] = [
     [title, fields.title],
@@ -115,13 +117,16 @@ export async function saveTapdTask(
   const items = parseTapdTasks([result.value], kind, binding.projectId)
   const description =
     fields.description === undefined ? previous?.description : tapdParagraphHtml(fields.description)
+  const relatedStory = storyId && (identity.story_id === undefined || String(identity.story_id) === storyId)
+    ? { relatedStoryId: storyId }
+    : undefined
   if (items?.[0]) {
     const [item] = items
     if (item.description === undefined && description !== undefined) {
       item.description = description
     }
-    if (previous?.details) {
-      item.details = { ...previous.details, ...item.details }
+    if (previous?.details || relatedStory) {
+      item.details = { ...previous?.details, ...item.details, ...relatedStory }
     }
     return { ok: true, value: item }
   }
@@ -145,7 +150,7 @@ export async function saveTapdTask(
       ...(previous?.statusLabel ? { statusLabel: previous.statusLabel } : {}),
       ...(priority ? { priority } : {}),
       ...(labels ? { labels } : {}),
-      ...(previous?.details ? { details: previous.details } : {}),
+      ...(previous?.details || relatedStory ? { details: { ...previous?.details, ...relatedStory } } : {}),
       ...(description !== undefined ? { description } : {})
     }
   }

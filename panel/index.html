@@ -175,6 +175,15 @@
           <dl id="item-metadata" class="detail-properties"></dl>
           <div id="item-labels" class="bar" hidden></div>
         </section>
+        <section id="related-tasks" class="stack separator" aria-labelledby="related-tasks-title" hidden>
+          <div class="bar spread">
+            <h3 id="related-tasks-title">关联任务</h3>
+            <button id="new-related-task" type="button" class="quiet">新建关联任务</button>
+          </div>
+          <div id="related-task-results" class="result-box"></div>
+          <p id="related-task-status" class="muted" role="status" hidden></p>
+          <button id="more-related-tasks" type="button" hidden>加载更多任务</button>
+        </section>
         <section id="comments-section" class="stack separator">
           <h3>评论</h3>
           <div id="comments" class="stack"></div>
@@ -197,6 +206,7 @@
 
       <section id="editor" class="stack" hidden>
         <h2 id="editor-title"></h2>
+        <p id="editor-story" class="muted" hidden></p>
         <form id="edit-form" class="stack">
           <label>标题 <input name="title" required maxlength="4000" /></label>
           <label>描述 <textarea name="description" rows="5" maxlength="20000"></textarea></label>

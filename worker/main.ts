@@ -112,6 +112,12 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
   withSession('item', task, (input, session) =>
     getTapdTask(reference(session, input), session.token)
   )
+  withSession(
+    'story-tasks',
+    project.extend({ storyId: tapdTaskIdSchema, page: externalTaskQuerySchema.shape.page }),
+    (query, session) =>
+      listTapdTasks({ ...query, connectionId: session.id, kind: 'task' }, session.token)
+  )
   withSession('todo-list', tapdTodoListQuerySchema, async (query, session) => todos.read(query, session))
   withSession('todo-board-item', project.extend({ id: tapdTaskIdSchema }), ({ projectId, id }, { token }) =>
     getTapdBoardTodo(projectId, id, token)
@@ -136,10 +142,20 @@ export default function activate(orca: PluginWorkerOrcaApi): void {
       saveTapdTask(binding(session, projectId), kind, fields, session)
   )
   withSession(
+    'create-story-task',
+    project.extend({ storyId: tapdTaskIdSchema, fields: tapdCreateTaskSchema.shape.fields }),
+    async ({ projectId, storyId, fields }, session) => {
+      const story = await getTapdTask(reference(session, { projectId, kind: 'story', id: storyId }), session.token)
+      if (!story.ok) return story
+      if (!story.value) return { ok: false, code: 'not-found' }
+      return saveTapdTask(binding(session, projectId), 'task', fields, session, { storyId })
+    }
+  )
+  withSession(
     'edit',
     task.extend(tapdEditTaskSchema.pick({ expectedModified: true, fields: true }).shape),
     ({ projectId, kind, id, expectedModified, fields }, session) =>
-      saveTapdTask(binding(session, projectId), kind, fields, session, { id, expectedModified })
+      saveTapdTask(binding(session, projectId), kind, fields, session, { edit: { id, expectedModified } })
   )
   withSession('status-options', task, (input, session) =>
     listTapdStatusOptions(reference(session, input), session.token)

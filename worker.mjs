@@ -21541,6 +21541,10 @@ async function listTapdTasks(query, token, author) {
   params.set("order", query.sort === "updated" ? "modified desc" : "id desc");
   params.set("limit", String(PAGE_SIZE2));
   params.set("page", String(query.page));
+  if (query.storyId) {
+    params.set("story_id", query.storyId);
+    params.set("fields", `${params.get("fields")},story_id`);
+  }
   if (query.status) {
     params.set(
       kind.data !== "task" && new RegExp("\\p{Script=Han}", "u").test(query.status) ? "v_status" : "status",
@@ -21575,7 +21579,10 @@ async function listTapdTasks(query, token, author) {
     return result;
   }
   const items = parseTapdTasks(result.value, kind.data, query.projectId);
-  return items ? { ok: true, value: { items, hasMore: items.length === PAGE_SIZE2 } } : { ok: false, code: "invalid" };
+  if (!items || query.storyId && items.some((item) => item.details?.relatedStoryId !== query.storyId)) {
+    return { ok: false, code: "invalid" };
+  }
+  return { ok: true, value: { items, hasMore: items.length === PAGE_SIZE2 } };
 }
 async function getTapdTask(ref, token) {
   const kind = tapdTaskKindSchema.safeParse(ref.kind);
@@ -21605,7 +21612,8 @@ var memberSchema = object({
 });
 var taskIdentity = object({
   id: tapdTaskIdSchema,
-  workspace_id: union([string2(), number2().int().positive()])
+  workspace_id: union([string2(), number2().int().positive()]),
+  story_id: unknown().optional()
 });
 async function listTapdProjectMembers(binding2, token) {
   const result = await tapdGet(
@@ -21632,7 +21640,7 @@ async function listTapdProjectMembers(binding2, token) {
     )
   };
 }
-async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
+async function saveTapdTask(binding2, kind, fields, { author, token }, { edit, storyId } = {}) {
   const { route, title: title2, owner, creator, wrapper } = tapdTaskResource[kind];
   const params = new URLSearchParams({ workspace_id: binding2.projectId });
   let previous = null;
@@ -21655,6 +21663,7 @@ async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
       return { ok: false, code: "invalid" };
     }
     params.set(creator, author);
+    if (storyId) params.set("story_id", storyId);
   }
   const formFields = [
     [title2, fields.title],
@@ -21682,13 +21691,14 @@ async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
   }
   const items = parseTapdTasks([result.value], kind, binding2.projectId);
   const description = fields.description === void 0 ? previous?.description : tapdParagraphHtml(fields.description);
+  const relatedStory = storyId && (identity2.story_id === void 0 || String(identity2.story_id) === storyId) ? { relatedStoryId: storyId } : void 0;
   if (items?.[0]) {
     const [item] = items;
     if (item.description === void 0 && description !== void 0) {
       item.description = description;
     }
-    if (previous?.details) {
-      item.details = { ...previous.details, ...item.details };
+    if (previous?.details || relatedStory) {
+      item.details = { ...previous?.details, ...item.details, ...relatedStory };
     }
     return { ok: true, value: item };
   }
@@ -21712,7 +21722,7 @@ async function saveTapdTask(binding2, kind, fields, { author, token }, edit) {
       ...previous?.statusLabel ? { statusLabel: previous.statusLabel } : {},
       ...priority ? { priority } : {},
       ...labels ? { labels } : {},
-      ...previous?.details ? { details: previous.details } : {},
+      ...previous?.details || relatedStory ? { details: { ...previous?.details, ...relatedStory } } : {},
       ...description !== void 0 ? { description } : {}
     }
   };
@@ -22436,6 +22446,11 @@ function activate(orca) {
     task,
     (input2, session) => getTapdTask(reference(session, input2), session.token)
   );
+  withSession(
+    "story-tasks",
+    project.extend({ storyId: tapdTaskIdSchema, page: externalTaskQuerySchema.shape.page }),
+    (query, session) => listTapdTasks({ ...query, connectionId: session.id, kind: "task" }, session.token)
+  );
   withSession("todo-list", tapdTodoListQuerySchema, async (query, session) => todos.read(query, session));
   withSession(
     "todo-board-item",
@@ -22463,9 +22478,19 @@ function activate(orca) {
     ({ projectId, kind, fields }, session) => saveTapdTask(binding(session, projectId), kind, fields, session)
   );
   withSession(
+    "create-story-task",
+    project.extend({ storyId: tapdTaskIdSchema, fields: tapdCreateTaskSchema.shape.fields }),
+    async ({ projectId, storyId, fields }, session) => {
+      const story = await getTapdTask(reference(session, { projectId, kind: "story", id: storyId }), session.token);
+      if (!story.ok) return story;
+      if (!story.value) return { ok: false, code: "not-found" };
+      return saveTapdTask(binding(session, projectId), "task", fields, session, { storyId });
+    }
+  );
+  withSession(
     "edit",
     task.extend(tapdEditTaskSchema.pick({ expectedModified: true, fields: true }).shape),
-    ({ projectId, kind, id, expectedModified, fields }, session) => saveTapdTask(binding(session, projectId), kind, fields, session, { id, expectedModified })
+    ({ projectId, kind, id, expectedModified, fields }, session) => saveTapdTask(binding(session, projectId), kind, fields, session, { edit: { id, expectedModified } })
   );
   withSession(
     "status-options",

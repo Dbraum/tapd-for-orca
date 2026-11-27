@@ -230,7 +230,7 @@ function paramsFor(kind: TapdTaskKind, projectId: string, detail: boolean): URLS
 }
 
 export async function listTapdTasks(
-  query: ExternalTaskQuery,
+  query: ExternalTaskQuery & { storyId?: string },
   token: string,
   author?: string
 ): Promise<ExternalTaskResult<ExternalTaskPage>> {
@@ -243,6 +243,10 @@ export async function listTapdTasks(
   params.set('order', query.sort === 'updated' ? 'modified desc' : 'id desc')
   params.set('limit', String(PAGE_SIZE))
   params.set('page', String(query.page))
+  if (query.storyId) {
+    params.set('story_id', query.storyId)
+    params.set('fields', `${params.get('fields')},story_id`)
+  }
   if (query.status) {
     params.set(
       kind.data !== 'task' && /\p{Script=Han}/u.test(query.status) ? 'v_status' : 'status',
@@ -277,9 +281,10 @@ export async function listTapdTasks(
     return result
   }
   const items = parseTapdTasks(result.value, kind.data, query.projectId)
-  return items
-    ? { ok: true, value: { items, hasMore: items.length === PAGE_SIZE } }
-    : { ok: false, code: 'invalid' }
+  if (!items || (query.storyId && items.some((item) => item.details?.relatedStoryId !== query.storyId))) {
+    return { ok: false, code: 'invalid' }
+  }
+  return { ok: true, value: { items, hasMore: items.length === PAGE_SIZE } }
 }
 
 export async function getTapdTask(
