@@ -1,8 +1,8 @@
 # TAPD Sidebar for Orca
 
-[简体中文](README.zh-CN.md) · [Report an issue](https://github.com/Dbraum/tapd-for-orca/issues)
+[简体中文](README.zh-CN.md) · [Orca](https://github.com/stablyai/orca) · [Report an issue](https://github.com/Dbraum/tapd-for-orca/issues)
 
-An independent community plugin for [Orca](https://github.com/stablyai/orca). Browse TAPD work items and cross-project to-dos in Orca’s right sidebar and start a workspace from a work item.
+An independent TAPD development sidebar for Orca. Browse work items and cross-project to-dos, make manual updates, and create or reopen linked Git workspaces. Development can start from a linked or standalone TAPD task. When a task belongs to a requirement, that requirement provides the specification and overall acceptance criteria.
 
 ## Install
 
@@ -26,6 +26,12 @@ Review the permissions and approve the installation in Orca. On the command line
 Select **我的待办** (My To-Dos) to view requirements, bugs, tasks, and board cards across projects. Filter by project or type and sort by due date or most recent update. Open a board card to read its details, visit it in TAPD, or start an Orca workspace.
 
 In a TAPD requirement, use **关联任务** (Linked tasks) to open existing tasks or **新建关联任务** (Create linked task) to add one. The task appears in the list after saving. When starting from a linked task, the prompt preview includes the task and its requirement. Select **同时发送上下文给 Agent** (Send context to the agent) to send the previewed text.
+
+## Planned agent workflow
+
+The sidebar will guide you through installing or reusing TAPD MCP and Matt Pocock skills in the selected agent and destination workspace environment. Before implementation, the agent will verify it can read the target TAPD project and use the skills needed for the current stage. It will also check the task’s intended behavior, acceptance criteria, and blockers. [TAPD MCP setup](https://developer.cloud.tencent.cn/mcp/server/11474) · [Matt Pocock skills](https://github.com/mattpocock/skills)
+
+The agent will use the relevant skill to clarify specifications, break down work, implement changes, or diagnose bugs. It will use TAPD MCP directly for operations the MCP supports. If it cannot complete an operation, it will explain why and point you to an existing sidebar control or the TAPD page. The sidebar can add support for operations outside the MCP’s current coverage as concrete needs arise. [Workflow decision, in Chinese](docs/adr/0002-sidebar-and-agent-workflow.md)
 
 ## Access and data
 

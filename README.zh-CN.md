@@ -1,8 +1,8 @@
 # Orca TAPD 侧栏插件
 
-[English](README.md) · [反馈问题](https://github.com/Dbraum/tapd-for-orca/issues)
+[English](README.md) · [Orca](https://github.com/stablyai/orca) · [反馈问题](https://github.com/Dbraum/tapd-for-orca/issues)
 
-这是面向 [Orca](https://github.com/stablyai/orca) 的第三方插件。你可以在 Orca 右侧栏查看 TAPD 工单和跨项目待办，也可以从工单创建工作区并启动 Agent。
+这是 Orca 里的第三方 TAPD 研发侧栏。你可以查看工单和跨项目待办、手动操作 TAPD，并创建或重新打开关联的 Git 工作区。正式开发可从关联任务或独立任务开始。对于关联任务，所属需求提供规格和整体验收目标。
 
 ## 安装与连接
 
@@ -22,6 +22,12 @@ orca plugin install Dbraum/tapd-for-orca
 点击 **我的待办**，跨项目查看需求、缺陷、任务和看板卡片。可按项目和类型筛选，按预计结束日期或最近更新排序。打开看板卡片可以查看详情、进入 TAPD 原页，或通过 **开始** 创建 Orca 工作区。
 
 在研发协作的需求详情中，可以在 **关联任务** 区域查看任务，或点击 **新建关联任务**。保存后，任务会出现在当前需求的列表中。打开关联任务并点击 **开始** 时，工单上下文会包含任务说明、所属需求的说明和两条工单链接。勾选 **同时发送上下文给 Agent** 后，Orca 会发送预览中的内容。
+
+## 计划中的 Agent 开发流程
+
+侧栏将提供配置引导，协助你在所选 Agent 和目标工作区环境中安装或复用 TAPD MCP 与 Matt Pocock skills。正式开发前，Agent 会验证能读取目标 TAPD 项目、能使用当前阶段所需的 skills，并核对任务的交付行为、验收标准和阻塞情况。 [TAPD MCP 配置](https://developer.cloud.tencent.cn/mcp/server/11474) · [Matt Pocock skills](https://github.com/mattpocock/skills)
+
+Agent 使用相应的 skill 澄清规格、拆分任务、实现或诊断。TAPD MCP 原生支持的工单操作由 Agent 直接调用。遇到当前无法完成的操作，Agent 会说明原因并引导你使用已有的侧栏入口或 TAPD 原页。侧栏也可以根据实际使用场景补充 MCP 暂未覆盖的操作。 [研发流程职责约定](docs/adr/0002-sidebar-and-agent-workflow.md)
 
 ## 权限和数据
 
