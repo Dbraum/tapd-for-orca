@@ -23,7 +23,7 @@ Review the permissions and approve the installation in Orca. On the command line
 3. Open a work item to read or update it. Creating, editing, changing status, and commenting require the corresponding TAPD permissions.
 4. Select **开始** (Start). The form preselects the Git project of the active Orca workspace when available. Leave the base branch empty to use the selected project's default. On Orca versions that support launching the default agent, the form uses the destination host's Orca default agent. You can override the project, branch, and agent, or choose to create a workspace only. Orca sends work-item context to the agent only if you opt in. The plugin remembers the workspace so you can reopen it from the work item.
 
-Select **我的待办** (My To-Dos) to view requirements, bugs, tasks, and board cards across projects. Filter by project or type and sort by due date or most recent update. Open a board card to read its details, visit it in TAPD, or start an Orca workspace.
+Select **我的待办** (My To-Dos) to view requirements, bugs, tasks, and board cards across projects. Filter by project or type, choose **今年更新** (Updated This Year) to filter by last update date, and sort by due date or most recent update. Open a board card to read its details, visit it in TAPD, or start an Orca workspace.
 
 In a TAPD requirement, use **关联任务** (Linked tasks) to open existing tasks or **新建关联任务** (Create linked task) to add one. The task appears in the list after saving. When starting from a linked task, the prompt preview includes the task and its requirement. Select **同时发送上下文给 Agent** (Send context to the agent) to send the previewed text.
 

@@ -13,7 +13,8 @@ test('TAPD todo pages preserve project, category and board item identity across 
   const secondCardId = '1010000000000000004'
   const boardCard = {
     id, workspace_id: projectId, name: 'Board card', owner: 'another;test;',
-    b_board_id: boardId, status: 'open', description: 'Example description'
+    b_board_id: boardId, status: 'open', description: 'Example description',
+    modified: '2026-06-15T10:30:00+08:00'
   }
   t.mock.method(globalThis, 'fetch', async (input, options) => {
     const url = new URL(input)
@@ -31,12 +32,14 @@ test('TAPD todo pages preserve project, category and board item identity across 
       case '/user_oauth/get_user_todo_story':
         data = [{ Story: {
           id, workspace_id: projectId, name: 'Functional requirement', workitem_type_id: categoryId,
-          status: 'planning', due: '2026-12-01 00:00:00', priority: '4'
+          status: 'planning', due: '2026-12-01 00:00:00', priority: '4',
+          modified: '2026-01-01 00:00:00'
         } }, ...Array.from({ length: 28 }, (_, offset) => ({
           Story: {
             id: String(1010000000000000100n + BigInt(offset)), workspace_id: projectId,
             name: `Requirement ${String(offset).padStart(2, '0')}`,
-            status: 'planning', v_status: '规划中', priority_label: 'High'
+            status: 'planning', v_status: '规划中', priority_label: 'High',
+            modified: ['2025-12-31 23:59:59', '2027-01-01', '2026-12-31 23:59:59'][offset]
           }
         }))]
         break
@@ -107,9 +110,20 @@ test('TAPD todo pages preserve project, category and board item identity across 
   assert.equal(lastPage.value.hasMore, false)
   assert.deepEqual(snapshot.items[0], {
     id, title: 'Functional requirement', status: 'planning', statusLabel: '规划中',
-    priority: 'Urgent', modified: '', due: '2026-12-01', typeLabel: 'FUNC',
+    priority: 'Urgent', modified: '2026-01-01 00:00:00', due: '2026-12-01', typeLabel: 'FUNC',
     kind: 'story', project: { id: projectId, name: 'Test project' }
   })
+
+  const updatedThisYear = await call('todo-list', { updatedYear: 2026, order: 'updated' })
+  assert.equal(updatedThisYear.value.count, 3)
+  assert.deepEqual(updatedThisYear.value.items.map(({ title }) => title), [
+    'Requirement 02', 'Board card', 'Functional requirement'
+  ])
+  assert.equal(updatedThisYear.value.hasMore, false)
+  const earlierYear = await call('todo-list', { updatedYear: 2025, type: 'STORY', projectId })
+  assert.deepEqual(earlierYear.value.items.map(({ title }) => title), ['Requirement 00'])
+  const unsupportedYear = await call('todo-list', { updatedYear: '2026' })
+  assert.deepEqual(unsupportedYear, { ok: false, code: 'invalid' })
 
   const bug = await call('todo-list', { type: 'BUG' })
   assert.equal(bug.value.items.length, 1)

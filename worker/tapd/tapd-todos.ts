@@ -54,7 +54,7 @@ function boardUrl(projectId: string, boardId: string, itemId: string): string {
   ).href
 }
 
-function normalizedDue(value: RawItem['due']): string {
+function normalizedDate(value: string | null | undefined): string {
   const date = value?.slice(0, 10) ?? ''
   return /^\d{4}-\d{2}-\d{2}$/.test(date) && date > '1970-01-01' ? date : ''
 }
@@ -161,7 +161,7 @@ async function listTapdTodoPage({ projectId, kind, page }: TodoQuery, author: st
           statusLabel: (details?.status === item.status && details?.v_status) || item.v_status || '',
           priority: kind === 'bug' ? priority : priorities.get(priority) ?? priority,
           modified: item.modified ?? '',
-          due: normalizedDue(item.due || item.deadline),
+          due: normalizedDate(item.due || item.deadline),
           typeLabel: categories.get(item.workitem_type_id ?? '') ?? defaultType[kind]
         }
       }),
@@ -177,6 +177,7 @@ export const tapdTodoListQuerySchema = z.object({
   preferredProjectId: tapdTaskIdSchema.optional(),
   projectId: tapdTaskIdSchema.optional(),
   type: z.string().trim().min(1).max(200).optional(),
+  updatedYear: z.number().int().min(1970).max(9999).optional(),
   order: z.enum(['due', 'updated']).default('due'),
   page: z.number().int().min(1).max(10_000).default(1),
   refresh: z.boolean().optional()
@@ -259,9 +260,11 @@ export function createTapdTodoList() {
       }
       if (current.error) return current.error
       const items = [...current.items.values()]
+      const yearPrefix = query.updatedYear === undefined ? undefined : `${query.updatedYear}-`
       const visible = items.filter((item) =>
         (!query.projectId || item.project.id === query.projectId) &&
-        (!query.type || item.typeLabel === query.type)
+        (!query.type || item.typeLabel === query.type) &&
+        (!yearPrefix || normalizedDate(item.modified).startsWith(yearPrefix))
       )
       visible.sort((a, b) => {
         const deadline = (a.due || '9999').localeCompare(b.due || '9999')
@@ -314,7 +317,7 @@ export async function getTapdBoardTodo(
     details: {
       ...(item.created ? { created: item.created } : {}),
       ...(item.begin ? { begin: item.begin } : {}),
-      ...(normalizedDue(item.due) ? { due: normalizedDue(item.due) } : {})
+      ...(normalizedDate(item.due) ? { due: normalizedDate(item.due) } : {})
     }
   })
   return normalized.success ? { ok: true, value: normalized.data } : invalid

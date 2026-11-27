@@ -21916,7 +21916,7 @@ function boardUrl(projectId, boardId, itemId) {
     "https://www.tapd.cn/"
   ).href;
 }
-function normalizedDue(value) {
+function normalizedDate(value) {
   const date5 = value?.slice(0, 10) ?? "";
   return /^\d{4}-\d{2}-\d{2}$/.test(date5) && date5 > "1970-01-01" ? date5 : "";
 }
@@ -22030,7 +22030,7 @@ async function listTapdTodoPage({ projectId, kind, page }, author, token) {
           statusLabel: details?.status === item.status && details?.v_status || item.v_status || "",
           priority: kind === "bug" ? priority : priorities.get(priority) ?? priority,
           modified: item.modified ?? "",
-          due: normalizedDue(item.due || item.deadline),
+          due: normalizedDate(item.due || item.deadline),
           typeLabel: categories.get(item.workitem_type_id ?? "") ?? defaultType[kind]
         };
       }),
@@ -22045,6 +22045,7 @@ var tapdTodoListQuerySchema = external_exports.object({
   preferredProjectId: tapdTaskIdSchema.optional(),
   projectId: tapdTaskIdSchema.optional(),
   type: external_exports.string().trim().min(1).max(200).optional(),
+  updatedYear: external_exports.number().int().min(1970).max(9999).optional(),
   order: external_exports.enum(["due", "updated"]).default("due"),
   page: external_exports.number().int().min(1).max(1e4).default(1),
   refresh: external_exports.boolean().optional()
@@ -22112,8 +22113,9 @@ function createTapdTodoList() {
       }
       if (current.error) return current.error;
       const items = [...current.items.values()];
+      const yearPrefix = query.updatedYear === void 0 ? void 0 : `${query.updatedYear}-`;
       const visible = items.filter(
-        (item) => (!query.projectId || item.project.id === query.projectId) && (!query.type || item.typeLabel === query.type)
+        (item) => (!query.projectId || item.project.id === query.projectId) && (!query.type || item.typeLabel === query.type) && (!yearPrefix || normalizedDate(item.modified).startsWith(yearPrefix))
       );
       visible.sort((a, b2) => {
         const deadline = (a.due || "9999").localeCompare(b2.due || "9999");
@@ -22161,7 +22163,7 @@ async function getTapdBoardTodo(projectId, id, token) {
     details: {
       ...item.created ? { created: item.created } : {},
       ...item.begin ? { begin: item.begin } : {},
-      ...normalizedDue(item.due) ? { due: normalizedDue(item.due) } : {}
+      ...normalizedDate(item.due) ? { due: normalizedDate(item.due) } : {}
     }
   });
   return normalized.success ? { ok: true, value: normalized.data } : invalid2;

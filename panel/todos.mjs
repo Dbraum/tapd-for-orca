@@ -10,6 +10,7 @@ const typeNames = new Map([
 export function createTodoView(openDetail) {
   const projectFilter = byId('todo-project')
   const typeFilter = byId('todo-type')
+  const timeFilter = byId('todo-time')
   const sort = byId('todo-sort')
   const summary = byId('todo-summary')
   const results = byId('todo-results')
@@ -21,6 +22,10 @@ export function createTodoView(openDetail) {
   let preferredProjectId
   let revision = 0
   let poll
+
+  function selectedYear() {
+    return timeFilter.value === 'current-year' ? new Date().getFullYear() : undefined
+  }
 
   function render() {
     const { types, progress, count, failures, hasMore } = snapshot
@@ -54,6 +59,9 @@ export function createTodoView(openDetail) {
       for (const label of [statusText(item.kind, item), item.priority, item.due]) {
         if (label) meta.append(node('span', label))
       }
+      if (snapshot.updatedYear !== undefined) {
+        meta.append(node('span', `更新于 ${item.modified.slice(0, 10)}`))
+      }
       const control = row(item.title, meta, () => openDetail(item))
       control.dataset.todoKey = `${item.project.id}/${item.kind}/${item.id}`
       return control
@@ -70,7 +78,9 @@ export function createTodoView(openDetail) {
   async function load({ refresh = false, append = false } = {}) {
     pause()
     const requestRevision = revision
-    const next = append ? page + 1 : 1
+    const updatedYear = selectedYear()
+    const appendPage = append && snapshot?.updatedYear === updatedYear
+    const next = appendPage ? page + 1 : 1
     refreshButton.disabled = true
     more.disabled = true
     if (refresh || !snapshot) summary.textContent = '正在加载待办…'
@@ -79,12 +89,13 @@ export function createTodoView(openDetail) {
         ...(preferredProjectId ? { preferredProjectId } : {}),
         ...(projectFilter.value ? { projectId: projectFilter.value } : {}),
         ...(typeFilter.value ? { type: typeFilter.value } : {}),
+        ...(updatedYear !== undefined ? { updatedYear } : {}),
         order: sort.value, page: next, refresh
       })
       if (requestRevision !== revision) return
-      snapshot = response
+      snapshot = { ...response, updatedYear }
       page = next
-      items = append ? [...items, ...response.items] : response.items
+      items = appendPage ? [...items, ...response.items] : response.items
       render()
       if (response.progress.loading && !byId('todos').hidden) {
         poll = setTimeout(() => void load(), 800)
@@ -106,7 +117,7 @@ export function createTodoView(openDetail) {
     projectFilter.value = projects.some(({ id }) => id === selected) ? selected : ''
   }
 
-  for (const control of [projectFilter, typeFilter, sort]) {
+  for (const control of [projectFilter, typeFilter, timeFilter, sort]) {
     control.addEventListener('change', () => void load())
   }
   on('more-todos', () => void load({ append: true }))
@@ -120,6 +131,7 @@ export function createTodoView(openDetail) {
       page = 1
       projectFilter.value = ''
       typeFilter.value = ''
+      timeFilter.value = ''
       sort.value = 'due'
       summary.textContent = ''
       results.replaceChildren()
@@ -133,7 +145,9 @@ export function createTodoView(openDetail) {
     show(projects, preferredId, refresh = false) {
       view('todos')
       setProjects(projects, preferredId)
-      if (refresh || !snapshot || snapshot.progress.loading) void load({ refresh })
+      if (refresh || !snapshot || snapshot.progress.loading || snapshot.updatedYear !== selectedYear()) {
+        void load({ refresh })
+      }
     }
   }
 }
